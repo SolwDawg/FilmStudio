@@ -1,28 +1,32 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError } from "commander";
-import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, type BrowserChannel } from "../browser/session.js";
-import { exitCodeForError, messageForError } from "../core/errors.js";
-import type { FlowAutomation } from "../core/automation.js";
+import { BROWSER_CHANNELS, type BrowserChannel, DEFAULT_BROWSER_CHANNEL } from "../browser/index.js";
+import { exitCodeForError, messageForError, resolveVersion } from "../core/index.js";
+import type { FlowAutomation } from "../core/index.js";
 
-import { planBatch, renderFilm, stitchFilm } from "./render/pipeline.js";
+import { planBatch, renderFilm, stitchFilm } from "./render/index.js";
 import {
+  buildActorDnaImagePrompt,
+  buildStoryChunkPrompt,
+  chunkStory,
   createProject,
+  DEFAULT_GENRE,
+  type FilmCharacter,
+  type GenreId,
+  genrePreset,
+  GENRES,
+  isGenreId,
   listProjects,
   loadFilm,
   loadState,
   projectPaths,
   saveFilm,
   saveState,
-  type FilmCharacter
-} from "./domain/project.js";
-import { scenesFromScript } from "./domain/script.js";
-import { startDashboard } from "./dashboard/server.js";
+  scenesFromScript
+} from "./domain/index.js";
+import { startDashboard } from "./dashboard/index.js";
 import { openFlowAutomation } from "./session.js";
-import { chunkStory, buildStoryChunkPrompt } from "./domain/breakdown.js";
-import { buildActorDnaImagePrompt } from "./domain/dna.js";
-import { DEFAULT_GENRE, GENRES, genrePreset, isGenreId, type GenreId } from "./domain/genres.js";
-import { resolveVersion } from "../core/version.js";
 
 export interface CreateStudioProgramOptions {
   // Tests inject a fake instead of driving a real browser.

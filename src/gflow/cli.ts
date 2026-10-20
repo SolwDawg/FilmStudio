@@ -1,20 +1,40 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError } from "commander";
-import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, launchLoginChrome, openBrowserSession, type BrowserChannel } from "../browser/session.js";
-import { exitCodeForError, messageForError } from "../core/errors.js";
-import { FlowPage } from "../flow/page.js";
-import type { AgentAutomation, CharacterAutomation, EditAutomation, FlowAutomation, SceneAutomation, ToolAutomation } from "../core/automation.js";
-import { AgentPage } from "../flow/agent.js";
-import { CharacterPage } from "../flow/characters.js";
-import { EditPage } from "../flow/edit.js";
-import { ScenePage } from "../flow/scene.js";
-import { ToolPage } from "../flow/tools.js";
-import { parseAgentInstruction, parseAgentRun, parseAgentSettings, parseBatchYaml, parseCharacter, parseEditMedia, parseExtendScene, parseImageJob, parseTool, parseVideoJob } from "../core/jobs.js";
+import {
+  BROWSER_CHANNELS,
+  type BrowserChannel,
+  DEFAULT_BROWSER_CHANNEL,
+  launchLoginChrome,
+  openBrowserSession
+} from "../browser/index.js";
+import {
+  exitCodeForError,
+  FLOW_URL,
+  messageForError,
+  parseAgentInstruction,
+  parseAgentRun,
+  parseAgentSettings,
+  parseBatchYaml,
+  parseCharacter,
+  parseEditMedia,
+  parseExtendScene,
+  parseImageJob,
+  parseTool,
+  parseVideoJob,
+  resolveOutputDir,
+  resolveVersion
+} from "../core/index.js";
+import { AgentPage, CharacterPage, EditPage, FlowPage, ScenePage, ToolPage } from "../flow/index.js";
+import type {
+  AgentAutomation,
+  CharacterAutomation,
+  EditAutomation,
+  FlowAutomation,
+  SceneAutomation,
+  ToolAutomation
+} from "../core/index.js";
 import { runJobs } from "./runner.js";
-import { resolveOutputDir } from "../core/paths.js";
-import { resolveVersion } from "../core/version.js";
-import { FLOW_URL } from "../core/flow-urls.js";
 
 export interface CreateProgramOptions {
   automation?: FlowAutomation;

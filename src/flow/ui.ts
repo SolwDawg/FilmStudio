@@ -1,6 +1,13 @@
 import type { Locator, Page } from "playwright";
-import { ManualActionRequiredError, UiContractError } from "../core/errors.js";
-import { FLOW_BASE, englishUrl, isFlowProjectId, projectIdFromUrl, projectSubUrl } from "../core/flow-urls.js";
+import {
+  englishUrl,
+  FLOW_BASE,
+  isFlowProjectId,
+  ManualActionRequiredError,
+  projectIdFromUrl,
+  projectSubUrl,
+  UiContractError
+} from "../core/index.js";
 
 // Click the element marked with data-gflow-pick. The marking evaluate already proved the
 // element is attached, visible and sized, so when the normal click cannot pass Playwright's

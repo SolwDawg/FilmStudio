@@ -1,8 +1,7 @@
 import type { Page } from "playwright";
-import { GenerationBlockedError } from "../core/errors.js";
-import type { CreateToolInput, ToolAutomation, ToolResult, ToolSummary } from "../core/automation.js";
+import { GenerationBlockedError, projectSubUrl } from "../core/index.js";
+import type { CreateToolInput, ToolAutomation, ToolResult, ToolSummary } from "../core/index.js";
 import { navigateToProject } from "./ui.js";
-import { projectSubUrl } from "../core/flow-urls.js";
 
 const TOOL_PRESET_LABEL: Record<NonNullable<CreateToolInput["preset"]>, RegExp> = {
   "image-filter": /Image Filter/i,

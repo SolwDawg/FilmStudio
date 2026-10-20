@@ -1,16 +1,18 @@
 import { extname, join } from "node:path";
 import type { Page } from "playwright";
 import {
+  artifactBasename,
   CreditLimitError,
+  englishUrl,
+  FLOW_BASE,
   GenerationBlockedError,
   GenerationFailedError,
-  RateLimitedError
-} from "../core/errors.js";
-import { artifactBasename, writeArtifactMetadata } from "../core/artifacts.js";
+  RateLimitedError,
+  writeArtifactMetadata
+} from "../core/index.js";
 import { flowLocators } from "./locators.js";
-import type { ExtendSceneInput, ExtendSceneResult, SceneAutomation, SceneSummary } from "../core/automation.js";
+import type { ExtendSceneInput, ExtendSceneResult, SceneAutomation, SceneSummary } from "../core/index.js";
 import { dismissOpenLayers, resolveExistingProject } from "./ui.js";
-import { FLOW_BASE, englishUrl } from "../core/flow-urls.js";
 
 // All selectors below were verified against the live scenebuilder UI:
 // - A video card on the project page links to /project/<id>/edit/<tileId>; opening it

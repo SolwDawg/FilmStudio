@@ -1,11 +1,10 @@
 import { execFile, spawn } from "node:child_process";
 import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
-import { createServer, type AddressInfo } from "node:net";
+import { type AddressInfo, createServer } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { resolveProfileDir } from "../core/paths.js";
-import { FLOW_URL } from "../core/flow-urls.js";
+import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
+import { FLOW_URL, resolveProfileDir } from "../core/index.js";
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

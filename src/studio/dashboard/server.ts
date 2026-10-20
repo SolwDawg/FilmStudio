@@ -1,35 +1,38 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createReadStream, existsSync, statSync } from "node:fs";
-import { writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
-import { stitchFilm } from "../render/pipeline.js";
+import { stitchFilm } from "../render/index.js";
 import {
   assertSlug,
+  buildActorDnaImagePrompt,
+  buildLocationDnaImagePrompt,
+  buildSelfHealingPrompt,
+  chunkStory,
   createProject,
+  createSlidingSceneWindows,
+  DEFAULT_GENRE,
+  DEFAULT_HEAL_INSTRUCTION,
+  DEFAULT_STORYBOARD_PROMPT,
+  type FilmCharacter,
+  type FilmLocation,
+  type FilmScene,
+  genrePreset,
+  GENRES,
+  isGenreId,
   listProjects,
   loadFilm,
   loadState,
+  mergeDiscoveredActors,
+  parseStructuredScript,
   projectPaths,
   saveFilm,
-  saveState,
-  type FilmCharacter,
-  type FilmLocation,
-  type FilmScene
-} from "../domain/project.js";
+  saveState
+} from "../domain/index.js";
 import { DASHBOARD_HTML } from "./html.js";
-import { chunkStory, parseStructuredScript } from "../domain/breakdown.js";
-import {
-  buildActorDnaImagePrompt,
-  buildLocationDnaImagePrompt,
-  createSlidingSceneWindows,
-  mergeDiscoveredActors
-} from "../domain/dna.js";
-import { cropStoryboardGrid } from "../media/storyboard.js";
-import { buildSelfHealingPrompt } from "../domain/healing.js";
-import { DEFAULT_HEAL_INSTRUCTION, DEFAULT_STORYBOARD_PROMPT } from "../domain/prompts.js";
-import { DEFAULT_GENRE, GENRES, genrePreset, isGenreId } from "../domain/genres.js";
+import { cropStoryboardGrid } from "../media/index.js";
 
 const MIME: Record<string, string> = {
   ".mp4": "video/mp4",

@@ -1,15 +1,23 @@
 import { join } from "node:path";
 import type { Page } from "playwright";
-import { GenerationBlockedError, GenerationFailedError } from "../core/errors.js";
-import { artifactBasename, writeArtifactMetadata } from "../core/artifacts.js";
+import {
+  artifactBasename,
+  GenerationBlockedError,
+  GenerationFailedError,
+  projectSubUrl,
+  writeArtifactMetadata
+} from "../core/index.js";
 import { downloadResult } from "./download.js";
 import { flowLocators } from "./locators.js";
 import type {
-  AgentAutomation, AgentInstructionInput, AgentInstructionSummary,
-  AgentSettingsInput, FlowJobResult, RunAgentInput
-} from "../core/automation.js";
+  AgentAutomation,
+  AgentInstructionInput,
+  AgentInstructionSummary,
+  AgentSettingsInput,
+  FlowJobResult,
+  RunAgentInput
+} from "../core/index.js";
 import { addFromProject, navigateToProject, pickOption, pickOptionInSection, selectModelOption } from "./ui.js";
-import { projectSubUrl } from "../core/flow-urls.js";
 
 const RATIO_ICON: Record<string, string> = {
   "16:9": "crop_16_9", "9:16": "crop_9_16", "4:3": "crop_landscape", "1:1": "crop_square", "3:4": "crop_portrait"

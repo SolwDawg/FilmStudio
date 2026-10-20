@@ -10,28 +10,29 @@ import {
   GenerationFailedError,
   LoginRequiredError,
   ManualActionRequiredError,
+  messageForError,
+  parseVideoJob,
+  projectIdFromUrl,
   RateLimitedError,
   UiContractError,
-  messageForError
-} from "../../core/errors.js";
-import type { FlowAutomation } from "../../core/automation.js";
-import { parseVideoJob, type VideoJob } from "../../core/jobs.js";
-import { concatVideos, extractLastFrame, normalizeVideo } from "../media/ffmpeg.js";
+  type VideoJob
+} from "../../core/index.js";
+import type { FlowAutomation } from "../../core/index.js";
+import { concatVideos, extractLastFrame, normalizeVideo } from "../media/index.js";
 
 import {
-  loadFilm,
-  loadState,
-  saveFilm,
-  saveState,
-  updateSceneState,
+  buildScenePrompt,
   type Film,
   type FilmScene,
   type FilmState,
+  loadFilm,
+  loadState,
   type ProjectPaths,
-  type SceneState
-} from "../domain/project.js";
-import { buildScenePrompt } from "../domain/script.js";
-import { projectIdFromUrl } from "../../core/flow-urls.js";
+  saveFilm,
+  saveState,
+  type SceneState,
+  updateSceneState
+} from "../domain/index.js";
 
 const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov"];
 

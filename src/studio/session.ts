@@ -1,6 +1,6 @@
-import { DEFAULT_BROWSER_CHANNEL, openBrowserSession, type BrowserChannel } from "../browser/session.js";
-import { FlowPage } from "../flow/page.js";
-import type { FlowAutomation } from "../core/automation.js";
+import { DEFAULT_BROWSER_CHANNEL, openBrowserSession, type BrowserChannel } from "../browser/index.js";
+import { FlowPage } from "../flow/index.js";
+import type { FlowAutomation } from "../core/index.js";
 
 export interface SessionOptions {
   profile?: string;

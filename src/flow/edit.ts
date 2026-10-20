@@ -1,12 +1,16 @@
 import { join } from "node:path";
 import type { Page } from "playwright";
-import { GenerationBlockedError, GenerationFailedError } from "../core/errors.js";
-import { artifactBasename, writeArtifactMetadata } from "../core/artifacts.js";
+import {
+  artifactBasename,
+  GenerationBlockedError,
+  GenerationFailedError,
+  projectSubUrl,
+  writeArtifactMetadata
+} from "../core/index.js";
 import { downloadResult } from "./download.js";
 import { flowLocators } from "./locators.js";
-import type { EditAutomation, EditMediaInput, EditMediaResult, ProjectMedia } from "../core/automation.js";
+import type { EditAutomation, EditMediaInput, EditMediaResult, ProjectMedia } from "../core/index.js";
 import { addFromProject, resolveExistingProject, uploadMedia } from "./ui.js";
-import { projectSubUrl } from "../core/flow-urls.js";
 
 export class EditPage implements EditAutomation {
   constructor(private readonly page: Page) {}
