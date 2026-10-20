@@ -1,0 +1,40 @@
+{
+  "name": "film-studio",
+  "version": "3.0.0",
+  "description": "AI film studio: write a script, render scenes in Google Flow with frame-to-frame continuity, and stitch the final movie.",
+  "type": "module",
+  "bin": {
+    "gflow": "./dist/src/index.js",
+    "film": "./dist/src/studio/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/studio/index.ts",
+    "gflow": "tsx src/index.ts",
+    "dashboard": "tsx src/studio/index.ts dashboard",
+    "build:applet": "tsx src/applet/build.ts",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["google-flow", "film", "veo", "ai-filmmaking", "video-generation", "playwright"],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0",
+    "playwright": "^1.44.0",
+    "yaml": "^2.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.4.0",
+    "@types/node": "^20.14.2",
+    "eslint": "^9.4.0",
+    "tsx": "^4.15.1",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.60.1",
+    "vitest": "^1.6.0"
+  }
+}

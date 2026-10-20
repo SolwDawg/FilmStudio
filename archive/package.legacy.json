@@ -1,0 +1,22 @@
+{
+  "name": "gflow-film-studio",
+  "version": "2.7.0",
+  "description": "Unified Film Production Suite combining Google Flow Studio & gflow-cli",
+  "type": "module",
+  "scripts": {
+    "start": "node gflow-studio-server.mjs",
+    "watch": "node gflow-clean-studio.mjs watch",
+    "launch": "node gflow-clean-studio.mjs launch",
+    "inject": "node gflow-clean-studio.mjs inject --force",
+    "build:clean": "node flow-tool-clean/build_bundle.mjs"
+  },
+  "keywords": [
+    "google-flow",
+    "film-production",
+    "ai-filmmaking",
+    "veo",
+    "gflow-cli"
+  ],
+  "author": "Antigravity",
+  "license": "MIT"
+}

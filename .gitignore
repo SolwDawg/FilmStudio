@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+.gflow/
+gflow-output/
+projects/*/renders/
+projects/*/final.mp4
+archive/output_movie/
+archive/rendered_videos/
+archive/scratch/
+archive/flow-tool-clean/dist/*.bundle.js
+archive/flow-tool-clean/dist/*.txt
+*.log
