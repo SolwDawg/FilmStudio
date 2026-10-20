@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { writeFile, mkdir, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -27,9 +27,14 @@ import {
   mergeDiscoveredActors
 } from "./dna.js";
 import { cropStoryboardGrid } from "./storyboard.js";
-import { buildAdversarialMutationPrompt, getEarlyProbeConfig } from "./adversarial.js";
-import { buildSelfHealingPrompt, cleanHealedResponse } from "./healing.js";
-import { DEFAULT_LOOP_REWRITE_PROMPT, DEFAULT_HEAL_INSTRUCTION } from "./prompts.js";
+import { buildSelfHealingPrompt } from "./healing.js";
+import {
+  DEFAULT_DIRECTIONAL_PROMPT,
+  DEFAULT_HEAL_INSTRUCTION,
+  DEFAULT_LOCATION_DIRECTIONAL_PROMPT,
+  DEFAULT_STORYBOARD_PROMPT,
+  DEFAULT_VIDEO_STYLE
+} from "./prompts.js";
 
 const MIME: Record<string, string> = {
   ".mp4": "video/mp4",
@@ -85,7 +90,13 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
 
   const spawnRender = (slug: string, force: boolean): void => {
     const args = [...process.execArgv, process.argv[1], "render", slug, ...(force ? ["--force"] : [])];
-    const child = spawn(process.execPath, args, { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+    // The IPC channel lets "stop" end the render gracefully (scene back to pending, browser
+    // disconnected) instead of killing it mid-write.
+    const child = spawn(process.execPath, args, {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+      env: { ...process.env, FILM_RENDER_IPC: "1" }
+    });
     running.set(slug, child);
     addLog(`${slug}: render pipeline started`);
     const forward = (chunk: Buffer): void => {
@@ -94,9 +105,23 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
     child.stdout?.on("data", forward);
     child.stderr?.on("data", forward);
     child.on("close", (code) => {
-      running.delete(slug);
+      if (running.get(slug) === child) running.delete(slug);
       addLog(`${slug}: render pipeline exited with code ${code}`);
     });
+  };
+
+  const stopRender = (slug: string): boolean => {
+    const child = running.get(slug);
+    if (!child) return false;
+    running.delete(slug);
+    if (child.connected) child.send("stop");
+    // Give it a moment to put the scene back to pending, then make sure it is gone.
+    const timer = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+    }, 10_000);
+    timer.unref();
+    child.once("close", () => clearTimeout(timer));
+    return true;
   };
 
   const serveMedia = (req: IncomingMessage, res: ServerResponse, slug: string, rest: string): void => {
@@ -218,9 +243,10 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
 
       // DELETE Project
       if (req.method === "DELETE" && parts.length === 3) {
-        if (running.has(slug)) {
-          running.get(slug)?.kill();
+        const child = running.get(slug);
+        if (child) {
           running.delete(slug);
+          child.kill();
         }
         await rm(paths.dir, { recursive: true, force: true });
         addLog(`Deleted project "${slug}"`);
@@ -230,7 +256,22 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
       // GET Project detail
       if (req.method === "GET" && parts.length === 3) {
         const [film, state] = await Promise.all([loadFilm(paths), loadState(paths)]);
-        return json(res, 200, { slug, film, state, running: running.has(slug) });
+        // Reference-sheet prompts are built here so the dashboard shows exactly what dna.ts generates.
+        const referencePrompts = {
+          characters: Object.fromEntries(
+            film.characters.map((c) => [c.name, buildActorDnaImagePrompt({ name: c.name, traits: c.description }, film.directionalPrompt)])
+          ),
+          locations: Object.fromEntries(
+            (film.locations ?? []).map((l) => [l.name, buildLocationDnaImagePrompt({ name: l.name, traits: l.description }, film.locationDirectionalPrompt)])
+          )
+        };
+        const defaults = {
+          directionalPrompt: DEFAULT_DIRECTIONAL_PROMPT,
+          locationDirectionalPrompt: DEFAULT_LOCATION_DIRECTIONAL_PROMPT,
+          storyboardPrompt: DEFAULT_STORYBOARD_PROMPT,
+          style: DEFAULT_VIDEO_STYLE
+        };
+        return json(res, 200, { slug, film, state, running: running.has(slug), referencePrompts, defaults });
       }
 
       if (req.method === "POST" && parts[3] === "config") {
@@ -256,10 +297,8 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
 
       // Emergency Stop
       if (req.method === "POST" && parts[3] === "stop") {
-        if (running.has(slug)) {
-          running.get(slug)?.kill();
-          running.delete(slug);
-          addLog(`${slug}: 🛑 EMERGENCY STOP - render process terminated`);
+        if (stopRender(slug)) {
+          addLog(`${slug}: 🛑 EMERGENCY STOP - render process stopping`);
         }
         const state = await loadState(paths);
         for (const s of Object.values(state.scenes)) {
@@ -342,7 +381,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
                   aliases: [],
                   roles: ["Diễn viên"],
                   traits: "Ngoại hình điện ảnh, phong thái tự nhiên",
-                  referencePrompt: buildActorDnaImagePrompt({ name: n, traits: "Ngoại hình điện ảnh" })
+                  referencePrompt: buildActorDnaImagePrompt({ name: n, traits: "Ngoại hình điện ảnh" }, film.directionalPrompt)
                 });
               }
             }
@@ -355,7 +394,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
         // Step 3: Trigger Render Pipeline
         if (running.has(slug)) return json(res, 409, { error: "render already running" });
         spawnRender(slug, false);
-        addLog(`${slug}: [Step 3: Auto-Render] Render pipeline started with I2V Continuity & Auto-Heal`);
+        addLog(`${slug}: [Step 3: Auto-Render] Render pipeline started with I2V Continuity`);
         return json(res, 202, { started: true, mode: "all-in-one" });
       }
 
@@ -438,7 +477,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
                   aliases: [],
                   roles: ["Diễn viên chính"],
                   traits: "Ngoại hình điện ảnh, phong thái tự nhiên",
-                  referencePrompt: buildActorDnaImagePrompt({ name: n, traits: "Ngoại hình điện ảnh" })
+                  referencePrompt: buildActorDnaImagePrompt({ name: n, traits: "Ngoại hình điện ảnh" }, film.directionalPrompt)
                 });
               }
             }
@@ -450,7 +489,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
               discoveredLocations.push({
                 name: locName,
                 traits: "Góc rộng điện ảnh, bố cục chiều sâu, ánh sáng tự nhiên",
-                referencePrompt: buildLocationDnaImagePrompt({ name: locName, traits: "Góc rộng điện ảnh" })
+                referencePrompt: buildLocationDnaImagePrompt({ name: locName, traits: "Góc rộng điện ảnh" }, film.locationDirectionalPrompt)
               });
             }
           }
@@ -478,7 +517,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
         };
         film.characters = [...existing, entry];
         await saveFilm(paths, film);
-        const dnaPrompt = buildActorDnaImagePrompt({ name: entry.name, traits: entry.description });
+        const dnaPrompt = buildActorDnaImagePrompt({ name: entry.name, traits: entry.description }, film.directionalPrompt);
         addLog(`${slug}: saved DNA profile for character "${entry.name}"`);
         return json(res, 200, { character: entry, dnaPrompt });
       }
@@ -498,7 +537,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
         };
         film.locations = [...existing, entry];
         await saveFilm(paths, film);
-        const locPrompt = buildLocationDnaImagePrompt({ name: entry.name, traits: entry.description });
+        const locPrompt = buildLocationDnaImagePrompt({ name: entry.name, traits: entry.description }, film.locationDirectionalPrompt);
         addLog(`${slug}: saved Location sheet for "${entry.name}"`);
         return json(res, 200, { location: entry, locPrompt });
       }
@@ -521,30 +560,6 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
         await saveFilm(paths, film);
         addLog(`${slug}: removed location "${locName}"`);
         return json(res, 200, { success: true });
-      }
-
-      // Early Safety Probe (Omni Flash 4s 360p)
-      if (req.method === "POST" && parts[3] === "dna" && parts[4] === "character" && parts[5] && parts[6] === "probe-safety") {
-        const charName = decodeURIComponent(parts[5]);
-        const film = await loadFilm(paths);
-        const char = film.characters.find((c) => c.name.toLowerCase() === charName.toLowerCase());
-        if (!char) return json(res, 404, { error: "character not found" });
-        const probeConfig = getEarlyProbeConfig(`Close up portrait of ${char.name}. ${char.description || ""}`);
-        addLog(`${slug}: [Celebrity Probe] Testing biometric safety for "${char.name}" with ${probeConfig.model} 4s 360p... PASSED`);
-        return json(res, 200, { success: true, probeConfig, status: "safe", message: `Nhân vật "${char.name}" an toàn với bộ lọc Google AI!` });
-      }
-
-      // Controlled Adversarial Biometric Mutation
-      if (req.method === "POST" && parts[3] === "dna" && parts[4] === "character" && parts[5] && parts[6] === "mutate") {
-        const charName = decodeURIComponent(parts[5]);
-        const film = await loadFilm(paths);
-        const char = film.characters.find((c) => c.name.toLowerCase() === charName.toLowerCase());
-        if (!char) return json(res, 404, { error: "character not found" });
-        const mutationPrompt = buildAdversarialMutationPrompt(char.name, char.description);
-        char.description = (char.description ? char.description + ". " : "") + "Đã tinh chỉnh nhân trắc học đối kháng để tránh trùng lặp diện mạo.";
-        await saveFilm(paths, film);
-        addLog(`${slug}: [Adversarial Mutation] Applied controlled biometric facial mutation prompt for "${char.name}"`);
-        return json(res, 200, { success: true, character: char, mutationPrompt });
       }
 
       // Add New Scene
@@ -673,7 +688,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
         if (!existsSync(sbPath)) return json(res, 404, { error: `Storyboard image not found at: ${sbPath}` });
 
         const outDir = join(paths.renders, "shots");
-        const slices = await cropStoryboardGrid(sbPath, 1920, 1080, { rows, cols }, outDir, `${sceneId}_shot`);
+        const slices = await cropStoryboardGrid(sbPath, { rows, cols }, outDir, `${sceneId}_shot`);
         scene.shotImages = slices.map((s) => s.replace(paths.dir + sep, "").replace(/\\/g, "/"));
         await saveFilm(paths, film);
         addLog(`${slug}: sliced storyboard for ${sceneId} into ${slices.length} shots`);
@@ -700,7 +715,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
         }
 
         const outDir = join(paths.renders, "shots");
-        const slices = await cropStoryboardGrid(sbPath, 1920, 1080, { rows, cols }, outDir, "global_shot");
+        const slices = await cropStoryboardGrid(sbPath, { rows, cols }, outDir, "global_shot");
         const relativeSlices = slices.map((s) => s.replace(paths.dir + sep, "").replace(/\\/g, "/"));
         addLog(`${slug}: sliced global storyboard into ${slices.length} shots`);
         return json(res, 200, { success: true, count: slices.length, shots: relativeSlices });

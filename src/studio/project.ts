@@ -1,7 +1,8 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { DEFAULT_VIDEO_STYLE } from "./prompts.js";
 
 const slugPattern = /^[a-z0-9][a-z0-9-]*$/;
 const idPattern = /^[a-zA-Z0-9._-]+$/;
@@ -82,6 +83,9 @@ export const filmSchema = z.object({
   locationDirectionalPrompt: z.string().optional(),
   style: z.string().default(""),
   flowProject: z.string().min(1).optional(),
+  // Id of the Flow project the first render created; later renders reuse it instead of creating
+  // a new Flow project every run. Ignored when `flowProject` (a project name) is set.
+  flowProjectId: z.string().regex(/^[0-9a-f-]{36}$/i).optional(),
   characters: z.array(filmCharacterSchema).default([]),
   locations: z.array(filmLocationSchema).optional(),
   scenes: z.array(filmSceneSchema).default([]),
@@ -168,7 +172,7 @@ export async function createProject(title: string, root = projectsRoot()): Promi
   const paths = projectPaths(slug, root);
   if (existsSync(paths.film)) throw new Error(`Project already exists: ${slug}`);
   await mkdir(paths.renders, { recursive: true });
-  await saveFilm(paths, filmSchema.parse({ title }));
+  await saveFilm(paths, filmSchema.parse({ title, style: DEFAULT_VIDEO_STYLE }));
   return { slug, paths };
 }
 
@@ -177,9 +181,30 @@ export async function loadFilm(paths: ProjectPaths): Promise<Film> {
   return filmSchema.parse(JSON.parse(await readFile(paths.film, "utf8")));
 }
 
+// The render process and the dashboard both write these files; writing a temp file and renaming
+// it over the target means a reader never sees a half-written JSON document.
+async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(tmp, file);
+      return;
+    } catch (error) {
+      // Windows refuses the rename while another process briefly holds the target open.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 5 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) {
+        await rm(tmp, { force: true });
+        throw error;
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 50 * (attempt + 1)));
+    }
+  }
+}
+
 export async function saveFilm(paths: ProjectPaths, film: Film): Promise<void> {
   await mkdir(paths.dir, { recursive: true });
-  await writeFile(paths.film, `${JSON.stringify(film, null, 2)}\n`, "utf8");
+  await writeJsonAtomic(paths.film, film);
 }
 
 export async function loadState(paths: ProjectPaths): Promise<FilmState> {
@@ -189,5 +214,14 @@ export async function loadState(paths: ProjectPaths): Promise<FilmState> {
 
 export async function saveState(paths: ProjectPaths, state: FilmState): Promise<void> {
   await mkdir(paths.dir, { recursive: true });
-  await writeFile(paths.state, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await writeJsonAtomic(paths.state, state);
+}
+
+// Re-reads state.json and changes one scene only, so concurrent writers (dashboard resets,
+// another scene's update) are not overwritten by a stale in-memory copy.
+export async function updateSceneState(paths: ProjectPaths, sceneId: string, entry: SceneState): Promise<FilmState> {
+  const state = await loadState(paths);
+  state.scenes[sceneId] = entry;
+  await saveState(paths, state);
+  return state;
 }

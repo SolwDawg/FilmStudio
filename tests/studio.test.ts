@@ -1,12 +1,15 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Script } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CreditLimitError, GenerationBlockedError, GenerationFailedError } from "../src/errors.js";
 import type { FlowAutomation, FlowAutomationRunInput } from "../src/flow/types.js";
 import { planBatch, renderFilm } from "../src/studio/pipeline.js";
 import { createProject, loadFilm, loadState, saveFilm, slugify } from "../src/studio/project.js";
 import { buildScenePrompt, parseScript, scenesFromScript } from "../src/studio/script.js";
 import { startDashboard } from "../src/studio/server.js";
+import { DASHBOARD_HTML } from "../src/studio/dashboard.js";
 
 const SCRIPT = `SCENE 1:
 Min-woo steps out of a car in the rain.
@@ -86,7 +89,7 @@ describe("render pipeline", () => {
         if (input.job.id === failOn) throw new Error("boom");
         const video = join(input.outDir, `${input.job.id}-001.mp4`);
         await mkdir(input.outDir, { recursive: true });
-        await writeFile(video, "video");
+        await writeFile(video, `video:${input.job.id}:${input.job.prompt}`);
         return { jobId: input.job.id, artifacts: [{ path: video, metadataPath: `${video}.json` }], flowUrl: "https://flow.test" };
       }
     };
@@ -124,6 +127,195 @@ describe("render pipeline", () => {
     expect(second.map((call) => call.job.id)).toEqual(["scene-02", "scene-03"]);
   });
 
+  // A fake Flow whose behaviour per call is scripted: `fail(input, n)` may throw for the n-th call
+  // of that scene id (0-based); otherwise it "renders" a video file.
+  function scriptedFlow(calls: FlowAutomationRunInput[], fail: (input: FlowAutomationRunInput, n: number) => void): FlowAutomation {
+    const seen = new Map<string, number>();
+    return {
+      async runJob(input) {
+        calls.push(input);
+        const n = seen.get(input.job.id) ?? 0;
+        seen.set(input.job.id, n + 1);
+        fail(input, n);
+        const video = join(input.outDir, `${input.job.id}-001.mp4`);
+        await mkdir(input.outDir, { recursive: true });
+        await writeFile(video, `video:${input.job.id}:${input.job.prompt}`);
+        return { jobId: input.job.id, artifacts: [{ path: video, metadataPath: `${video}.json` }], flowUrl: "https://flow.test" };
+      }
+    };
+  }
+
+  const noSleep = async (): Promise<void> => undefined;
+
+  it("does not re-render a policy-blocked prompt", async () => {
+    const paths = await setup();
+    const calls: FlowAutomationRunInput[] = [];
+    const flow = scriptedFlow(calls, (input) => {
+      if (input.job.id === "scene-01") throw new GenerationBlockedError("policy");
+    });
+    await expect(renderFilm(paths, { automation: flow, extractFrame: fakeExtract, sleep: noSleep })).rejects.toThrow("blocked");
+    expect(calls.map((call) => call.job.id)).toEqual(["scene-01"]);
+    expect((await loadState(paths)).scenes["scene-01"].status).toBe("failed");
+  });
+
+  it("retries transient failures with the configured delay, up to maxRetries", async () => {
+    const paths = await setup();
+    const calls: FlowAutomationRunInput[] = [];
+    const waits: number[] = [];
+    const flow = scriptedFlow(calls, (input, n) => {
+      if (input.job.id === "scene-01" && n === 0) throw new GenerationFailedError("timed out");
+      if (input.job.id === "scene-02") throw new GenerationFailedError("always");
+    });
+    await expect(
+      renderFilm(paths, {
+        automation: flow,
+        extractFrame: fakeExtract,
+        maxRetries: 2,
+        retryDelayMs: 1234,
+        sleep: async (ms) => void waits.push(ms)
+      })
+    ).rejects.toThrow("always");
+    expect(calls.map((call) => call.job.id)).toEqual(["scene-01", "scene-01", "scene-02", "scene-02", "scene-02"]);
+    expect(waits).toEqual([1234, 1234, 1234]);
+    expect((await loadState(paths)).scenes["scene-01"].status).toBe("done");
+  });
+
+  it("continueOnError skips only the scenes chained to a failed one", async () => {
+    const paths = await setup();
+    const calls: FlowAutomationRunInput[] = [];
+    const flow = scriptedFlow(calls, (input) => {
+      if (input.job.id === "scene-02") throw new GenerationBlockedError("policy");
+    });
+    const result = await renderFilm(paths, { automation: flow, extractFrame: fakeExtract, continueOnError: true, sleep: noSleep });
+    expect(result.failed).toEqual(["scene-02"]);
+    expect(result.skipped).toEqual(["scene-03"]); // scene-03 continues from scene-02
+    expect(calls.map((call) => call.job.id)).toEqual(["scene-01", "scene-02"]);
+
+    // scene-01 failing does not stop scene-02, which starts after a hard cut.
+    const paths2 = (await createProject("Second Film")).paths;
+    const film = await loadFilm(paths);
+    await saveFilm(paths2, { ...film, title: "Second Film" });
+    const calls2: FlowAutomationRunInput[] = [];
+    const flow2 = scriptedFlow(calls2, (input) => {
+      if (input.job.id === "scene-01") throw new Error("boom");
+    });
+    const result2 = await renderFilm(paths2, { automation: flow2, extractFrame: fakeExtract, continueOnError: true, sleep: noSleep });
+    expect(result2.failed).toEqual(["scene-01"]);
+    expect(result2.skipped).toEqual([]);
+    expect(calls2.map((call) => call.job.id)).toEqual(["scene-01", "scene-02", "scene-03"]);
+  });
+
+  it("stops the whole run on credit errors even with continueOnError", async () => {
+    const paths = await setup();
+    const calls: FlowAutomationRunInput[] = [];
+    const flow = scriptedFlow(calls, () => {
+      throw new CreditLimitError("quota");
+    });
+    await expect(
+      renderFilm(paths, { automation: flow, extractFrame: fakeExtract, continueOnError: true, sleep: noSleep })
+    ).rejects.toThrow("quota");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("waits while the project is paused", async () => {
+    const paths = await setup();
+    const film = await loadFilm(paths);
+    await saveFilm(paths, { ...film, isPaused: true });
+    const calls: FlowAutomationRunInput[] = [];
+    const logs: string[] = [];
+    const sleep = async (): Promise<void> => {
+      expect(calls).toHaveLength(0);
+      const current = await loadFilm(paths);
+      await saveFilm(paths, { ...current, isPaused: false });
+    };
+    await renderFilm(paths, { automation: scriptedFlow(calls, () => undefined), extractFrame: fakeExtract, sleep, log: (m) => logs.push(m) });
+    expect(logs.some((line) => line.includes("paused"))).toBe(true);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("applies film.json edits made while an earlier scene renders", async () => {
+    const paths = await setup();
+    const calls: FlowAutomationRunInput[] = [];
+    const flow: FlowAutomation = {
+      async runJob(input) {
+        if (input.job.id === "scene-01") {
+          const film = await loadFilm(paths);
+          film.scenes[2].prompt = "EDITED DURING RENDER";
+          await saveFilm(paths, film);
+        }
+        return scriptedFlow(calls, () => undefined).runJob(input);
+      }
+    };
+    await renderFilm(paths, { automation: flow, extractFrame: fakeExtract });
+    expect(calls[2].job.prompt).toContain("EDITED DURING RENDER");
+  });
+
+  it("uses render settings from film.json", async () => {
+    const paths = await setup();
+    const film = await loadFilm(paths);
+    await saveFilm(paths, { ...film, renderTimeout: 900, maxRetries: 0 });
+    const calls: FlowAutomationRunInput[] = [];
+    const flow = scriptedFlow(calls, (input) => {
+      if (input.job.id === "scene-02") throw new GenerationFailedError("flaky");
+    });
+    await expect(renderFilm(paths, { automation: flow, extractFrame: fakeExtract, sleep: noSleep })).rejects.toThrow("flaky");
+    expect(calls[0].job.timeout).toBe(900);
+    expect(calls.filter((call) => call.job.id === "scene-02")).toHaveLength(1); // maxRetries 0
+  });
+
+  it("re-extracts a missing last frame instead of dropping continuity", async () => {
+    const paths = await setup();
+    const extracted: string[] = [];
+    const extract = async (video: string, png: string): Promise<void> => {
+      extracted.push(video);
+      await writeFile(png, "png");
+    };
+    await renderFilm(paths, { automation: scriptedFlow([], () => undefined), extractFrame: extract });
+    // Simulate an earlier run whose frame extraction failed for scene-02.
+    const state = await loadState(paths);
+    await rm(join(paths.dir, state.scenes["scene-02"].lastFrame as string));
+    extracted.length = 0;
+
+    const calls: FlowAutomationRunInput[] = [];
+    await renderFilm(paths, { automation: scriptedFlow(calls, () => undefined), extractFrame: extract, only: ["scene-03"], force: true });
+    expect(extracted[0]).toMatch(/scene-02-001\.mp4$/);
+    const start = calls[0].job.type === "video" ? calls[0].job.startFrame : undefined;
+    expect(start).toMatch(/scene-02\.last\.png$/);
+  });
+
+  it("fails a scene whose download is identical to another scene's clip", async () => {
+    const paths = await setup();
+    const sameBytes: FlowAutomation = {
+      async runJob(input) {
+        const video = join(input.outDir, `${input.job.id}-001.mp4`);
+        await mkdir(input.outDir, { recursive: true });
+        await writeFile(video, "the same old clip");
+        return { jobId: input.job.id, artifacts: [{ path: video, metadataPath: `${video}.json` }], flowUrl: "https://flow.test" };
+      }
+    };
+    await expect(renderFilm(paths, { automation: sameBytes, extractFrame: fakeExtract, sleep: noSleep })).rejects.toThrow(
+      "identical to scene-01"
+    );
+    const state = await loadState(paths);
+    expect(state.scenes["scene-01"].status).toBe("done");
+    expect(state.scenes["scene-02"].status).toBe("failed");
+  });
+
+  it("remembers the Flow project the first scene created and reuses it", async () => {
+    const paths = await setup();
+    const projectId = "1a7565fa-d1c2-4536-b58c-7cff5c3b0d3d";
+    const calls: FlowAutomationRunInput[] = [];
+    const flow: FlowAutomation = {
+      async runJob(input) {
+        const result = await scriptedFlow(calls, () => undefined).runJob(input);
+        return { ...result, flowUrl: `https://flow.google.com/project/${projectId}/edit/0d171ba5-4491-45be-b16e-73225531baad` };
+      }
+    };
+    await renderFilm(paths, { automation: flow, extractFrame: fakeExtract });
+    expect(calls.map((call) => call.job.project)).toEqual([undefined, projectId, projectId]);
+    expect((await loadFilm(paths)).flowProjectId).toBe(projectId);
+  });
+
   it("rejects unknown scene ids", async () => {
     const paths = await setup();
     await expect(renderFilm(paths, { automation: fakeFlow([]), only: ["nope"] })).rejects.toThrow("Unknown scene");
@@ -135,6 +327,13 @@ describe("render pipeline", () => {
     expect(yaml).toContain("id: scene-01");
     expect(yaml).toContain("type: video");
     expect(yaml).not.toContain("startFrame");
+  });
+
+  it("ships dashboard JavaScript that parses", () => {
+    // A single missing brace once made the browser drop the whole script, so no button worked.
+    const scripts = [...DASHBOARD_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const source of scripts) expect(() => new Script(source)).not.toThrow();
   });
 
   it("serves the dashboard only to its own origin and confines media to renders/", async () => {

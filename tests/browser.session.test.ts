@@ -8,6 +8,7 @@ import {
   closeChromeForProfile,
   findChromeProcessesForProfile,
   hiddenWindowArgs,
+  matchProfileProcesses,
   isSingletonLockError,
   messageForBrowserLaunchError,
   resolveChromeExecutable
@@ -149,6 +150,26 @@ describe("resolveChromeExecutable", () => {
       if (previous === undefined) delete process.env.GFLOW_CHROME_PATH;
       else process.env.GFLOW_CHROME_PATH = previous;
     }
+  });
+});
+
+describe("matchProfileProcesses", () => {
+  const profile = "C:\\Users\\me\\.gflow\\profiles\\default";
+  it("matches the root Chrome on exactly this profile, case-insensitively on Windows", () => {
+    const entries = [
+      { pid: 1, command: `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir=c:\\users\\me\\.gflow\\profiles\\default --remote-debugging-port=0` },
+      { pid: 2, command: `chrome.exe --type=renderer --user-data-dir=${profile} ` },
+      { pid: 3, command: `chrome.exe --user-data-dir=${profile}-other --no-first-run` },
+      { pid: 4, command: `chrome.exe "--user-data-dir=${profile}" --no-first-run` },
+      { pid: 5, command: `"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"` }
+    ];
+    expect(matchProfileProcesses(entries, profile, "win32")).toEqual([1, 4]);
+  });
+
+  it("is case-sensitive outside Windows", () => {
+    const entries = [{ pid: 7, command: "chrome --user-data-dir=/Home/me/p" }];
+    expect(matchProfileProcesses(entries, "/home/me/p", "linux")).toEqual([]);
+    expect(matchProfileProcesses(entries, "/Home/me/p", "linux")).toEqual([7]);
   });
 });
 

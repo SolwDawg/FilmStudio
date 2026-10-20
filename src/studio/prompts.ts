@@ -1,80 +1,88 @@
 // ============================================================
 // Cinematic Prompts, Production Directives & Safety Keywords
 // ============================================================
+//
+// Two audiences, kept apart on purpose:
+// - LLM prompts (story breakdown, rewrites): instructions, roles, rules, output format.
+// - Generation prompts (video style, reference images, storyboard): pure visual description.
+//   Video/image models do not follow instructions or role-play; every word is read as something
+//   to depict, so meta-instructions there only dilute the shot (and "write X on the image" puts
+//   garbled text into frames).
 
-export const DEFAULT_STORY_PROMPT = `Phân tích truyện, ý tưởng và hình ảnh tham khảo đính kèm (nếu có).
-Viết cho mình kịch bản quay phim điện ảnh chi tiết, thể loại bám sát truyện, bám sát cốt truyện, không được phép sáng tạo thêm. văn phong, ngôn ngữ phù hợp người Việt Nam . Yêu cầu: 
+// Replaced with the scene length (film.duration) by buildStoryChunkPrompt.
+export const DURATION_PLACEHOLDER = "{{DURATION}}";
 
-* Cấu trúc cố định của 1 SCENE 10 giây bao gồm:
-Bắt đầu với chữ SCENE.
-Liệt kê tên nhân vật.
-Liệt kê tên bối cảnh chính xác.
-Mỗi shot, chỉ ghi shot, không ghi thời gian và bao gồm các thành phần sau: (Tên nhân vật, Bối cảnh nhất quán với toàn bộ câu chuyện, Từng shot và hành động cụ thể của từng nhân vật, Biểu cảm, hành động và trạng thái cảm xúc. Ghi rõ thoại của nhân vật, luôn ghi tên nhân vật trước thoại. Khi nhân vật nào nói, camera phải chuyển/hướng phong cách điện ảnh rõ ràng về đúng nhân vật đó, ghi rõ tên nhân vật được quay. Diễn biến phải liên tục, logic, dễ quay và có cao trào. Thoại tự nhiên, đúng chất drama hài hước Việt Nam).
-* Các shot phải liên kết mượt mà, không nhảy cảnh vô lý.
-* Mỗi scene chỉ có duy nhất 1 từ “SCENE”.
-  Chỉ xuất kịch bản theo từng SCENE, không giải thích gì thêm`;
+export const DEFAULT_STORY_PROMPT = `Bạn là biên kịch kiêm đạo diễn hình ảnh (DOP) của một ê-kíp phim điện ảnh. Chuyển truyện / ý tưởng bên dưới (và ảnh tham khảo đính kèm, nếu có) thành kịch bản phân cảnh cho phim AI live-action. Mỗi SCENE sẽ được render thành MỘT clip video dài khoảng ${DURATION_PLACEHOLDER} giây; các clip nối tiếp nhau bằng frame cuối của clip trước.
 
-export const DEFAULT_SYSTEM_PROMPT = `Sử dụng các hình ảnh tham khảo đã tải lên làm nguồn dữ liệu hình ảnh chuẩn xác tuyệt đối. Đọc toàn bộ kịch bản trước khi bắt đầu tạo hình ảnh.
+NỘI DUNG
+- Bám sát cốt truyện, nhân vật, các mối quan hệ và thể loại của truyện gốc; không thêm tình tiết mới.
+- Thể hiện bằng hình ảnh và hành động, không kể lể. Góc máy nương theo cảm xúc của nhân vật.
+- Diễn biến liên tục, logic, dễ quay và có cao trào. Thoại tự nhiên, phù hợp người Việt.
+- Diễn xuất tiết chế: ánh mắt, hơi thở, khoảng lặng, cử chỉ nhỏ; không cường điệu.
 
-Đóng vai một ê-kíp gồm đạo diễn, đạo diễn hình ảnh (DOP), biên tập viên và huấn luyện viên diễn xuất từng đoạt giải thưởng tại Hollywood. Chuyển hóa kịch bản thành một bộ phim điện ảnh live-action siêu chân thực. Nắm vững cốt truyện, nhân vật, các mối quan hệ, động cơ, xung đột, nhịp độ, diễn biến cảm xúc và các tầng ý nghĩa ngầm. THỂ HIỆN BẰNG HÌNH ẢNH, ĐỪNG KỂ LỂ. Góc máy phải nương theo cảm xúc, không phải lời thoại.
+ĐỊNH DẠNG (bắt buộc, đúng từng dòng)
+SCENE <số>:
+Nhân vật: <tên chuẩn, cách nhau bằng dấu phẩy; hoặc "Không có">
+Bối cảnh: <tên bối cảnh, viết giống hệt nhau mỗi lần xuất hiện>
+Shot: (<cỡ cảnh và chuyển động máy bằng tiếng Anh, ví dụ Medium tracking shot>) <hành động, biểu cảm, ánh sáng diễn ra trong ${DURATION_PLACEHOLDER} giây>. <Tên nhân vật>: "<thoại>"
 
-PHONG CÁCH ĐIỆN ẢNH: Live-action đời thực, photorealistic, tự nhiên, không CGI, bố cục thanh thoát, chiều sâu không gian chân thực, chất liệu vật lý chính xác, ánh sáng có nguồn rõ ràng và độ tương phản điện ảnh tiết chế. Ưu tiên texture da, lỗ chân lông, tóc con, nếp vải, bóng đổ và phản chiếu tự nhiên. Tránh da nhựa, làm đẹp quá mức, ánh sáng giả, HDR, bloom và vẻ ngoài nhân tạo.
+QUY TẮC
+1. Đánh số liên tục SCENE 1:, SCENE 2:, ... Mỗi scene chỉ có duy nhất một dòng bắt đầu bằng "SCENE".
+2. Mỗi scene đúng MỘT shot: một clip ${DURATION_PLACEHOLDER} giây không chứa được nhiều góc máy. Cần nhiều góc máy thì tách thành nhiều scene.
+3. Thoại: tối đa 2 câu ngắn (khoảng 15 từ) mỗi scene, luôn ghi tên nhân vật trước thoại và đặt thoại trong ngoặc kép. Máy quay hướng về đúng người đang nói.
+4. Liền mạch: nếu scene tiếp nối scene trước (cùng địa điểm, cùng thời điểm), mở đầu đúng vị trí, tư thế, ánh sáng mà scene trước kết thúc.
+5. Khi đổi địa điểm, nhảy thời gian hoặc chuyển sang tuyến nhân vật khác, viết [CUT] ngay sau "SCENE <số>:" trên cùng dòng.
+6. Luôn gọi nhân vật bằng đúng tên chuẩn, không thay bằng "anh ấy", "cô ta", "nàng".
+7. Giữ trang phục, kiểu tóc nhất quán giữa các scene, trừ khi truyện có thay đổi.
+8. Không mô tả chữ, phụ đề, logo hay biển hiệu có chữ trong khung hình.
 
-DIỄN XUẤT: Hơi thở, chớp mắt, cử động mắt, khoảng lặng, cử chỉ tinh tế, vi biểu cảm và cảm xúc được tiết chế một cách tự nhiên. Tránh lối diễn xuất máy móc, đồng bộ hóa động tác hoặc cường điệu.
+Chỉ xuất các SCENE theo định dạng trên, không giải thích gì thêm.
 
-GÓC MÁY: Mang đậm chất điện ảnh khổ lớn (large-format), đa dạng các cỡ cảnh (toàn, trung, cận, OTS, POV), chuyển động máy có chủ đích, tự nhiên như máy quay thật. Tránh lặp lại bố cục khung hình, lạm dụng xóa phông hoặc chuyển động máy vô lý.
+VÍ DỤ (chỉ minh họa định dạng, không dùng lại nội dung):
+SCENE 1:
+Nhân vật: Min-woo
+Bối cảnh: Ngã tư Gangnam đêm mưa
+Shot: (Medium-wide tracking shot) Min-woo trong áo măng tô be bước xuống xe, khựng lại khi nhận ra bóng dáng quen thuộc bên kia đường; cuối shot máy lia sang vỉa hè đối diện.
 
-TÍNH NHẤT QUÁN: Giữ nguyên tuyệt đối đặc điểm nhận dạng nhân vật, khuôn mặt, độ tuổi, kiểu tóc, trang phục từ ảnh tham chiếu.
+SCENE 2:
+Nhân vật: Seo-yeon
+Bối cảnh: Ngã tư Gangnam đêm mưa
+Shot: (Medium shot, continuing the pan) Seo-yeon cầm ô trong suốt, mắt ngấn lệ, tay buông lỏng khiến chiếc ô rơi xuống mặt đường ướt. Seo-yeon: "Là anh thật sao?"
 
-QUY TẮC XUẤT: Với lệnh tạo ảnh thì ghi rõ thời gian từng cảnh trên ảnh. Với lệnh tạo video thì chọn đúng thứ tự cảnh, không có chữ trên video.`;
+SCENE 3: [CUT]
+Nhân vật: Seo-yeon
+Bối cảnh: Quán cà phê Bukchon
+Shot: (Wide establishing shot, slow dolly-in) Sáng hôm sau, nắng thu xuyên qua cửa kính, Seo-yeon ngồi bên cửa sổ đọc một lá thư.`;
 
-export const DEFAULT_DIRECTIONAL_PROMPT = `Phong cách hiện đại, nhân vật trẻ đẹp, nữ rất xinh xắn và trang phục lộng lẫy, chân dài và cao. Với mỗi nhân vật, tạo ảnh thiết kế nhân vật theo phong cách người thật, điện ảnh, chân thực cao.
+// Default `film.style` for new projects: prepended to EVERY scene's video prompt, so it stays
+// short and purely visual. The scene's own action must not be drowned out by it.
+export const DEFAULT_VIDEO_STYLE = `Live-action, photorealistic cinematic footage, large-format cinema camera. Natural motivated lighting, restrained contrast, real skin texture, natural hair and fabric. Subtle, natural acting. Purposeful, realistic camera movement. Faces, ages, hair and outfits match the character references. No on-screen text, subtitles or watermarks.`;
 
-Ghi rõ thông tin trên ảnh:
-· Tên nhân vật
-· Tuổi
-· Ngoại hình
-· Khuôn mặt
-· Kiểu tóc
-· Dáng người
-· Trang phục phù hợp với thời đại và hoàn cảnh trong kịch bản
-· Phụ kiện đặc trưng
-· Đặc điểm nhận diện cố định
-· DNA giọng nói chính xác
-· Toàn thân chính diện
-· Góc 3/4
-· Góc nghiêng
-· Mặt sau
-· Cận mặt
+export const DEFAULT_DIRECTIONAL_PROMPT = `Ảnh tham chiếu nhân vật (character reference sheet) phong cách người thật, điện ảnh, siêu chân thực, dùng làm chuẩn nhận diện cho mọi cảnh quay sau.
 
-Giữ khuôn mặt, vóc dáng, tóc, độ tuổi và các đặc điểm nhận diện NHẤT QUÁN tuyệt đối để có thể sử dụng làm reference cho tất cả cảnh sau này. Xuất ảnh Phông nền xanh chroma key sạch, đồng nhất, ánh sáng mềm mại, bố cục chuyên nghiệp, phù hợp làm ảnh tham chiếu nhân vật cho phim AI.`;
+- Ngoại hình, độ tuổi, vóc dáng, kiểu tóc, trang phục và phụ kiện đúng theo mô tả nhân vật bên dưới và đúng thời đại, hoàn cảnh của kịch bản; không tự làm đẹp, làm trẻ hay thay đổi vóc dáng.
+- Một ảnh gồm 5 góc của cùng một người, xếp thành một hàng ngang, cùng tỉ lệ: toàn thân chính diện, toàn thân góc 3/4, toàn thân góc nghiêng, toàn thân phía sau, cận mặt.
+- Khuôn mặt, tóc, trang phục, phụ kiện giống hệt nhau ở cả 5 góc.
+- Phông nền xanh chroma key trơn, đồng nhất; ánh sáng studio mềm, đều, không bóng gắt.
+- Không có chữ, nhãn, số, chú thích hay logo trong ảnh.`;
 
-export const DEFAULT_LOCATION_DIRECTIONAL_PROMPT = `Phong cách hiện đại. Mỗi bối cảnh phải được thiết kế thành ảnh tham chiếu bối cảnh riêng, không phải ảnh minh họa một shot cụ thể.
+export const DEFAULT_LOCATION_DIRECTIONAL_PROMPT = `Ảnh tham chiếu bối cảnh (location reference) phong cách người thật, điện ảnh, siêu chân thực, dùng làm chuẩn cho mọi cảnh quay diễn ra tại đây, không phải ảnh minh họa một shot cụ thể.
 
-Thể hiện rõ và ghi rõ thông tin trên ảnh:
-· Tên bối cảnh
-· Kiến trúc
-· Không gian
-· Bố cục tổng thể
-· Nội thất
-· Đồ vật đặc trưng
-· Cửa, cửa sổ, cầu thang, bàn ghế, giường, tủ... nếu có
-· Chất liệu
-· Màu sắc
-· Ánh sáng
-· Thời đại
-· Phong cách kiến trúc
-· Các chi tiết cần duy trì nhất quán trong những cảnh quay sau
-
-Bối cảnh phải được thể hiện ở góc nhìn điện ảnh rộng, rõ không gian và các vật thể quan trọng, KHÔNG có nhân vật đứng trong ảnh, trừ khi nhân vật là một phần cố định của thiết kế bối cảnh.`;
+- Kiến trúc, nội thất, vật liệu, màu sắc, thời đại và phong cách đúng theo mô tả bối cảnh bên dưới.
+- Góc rộng ngang tầm mắt, thấy rõ bố cục không gian, lối vào, cửa sổ và các đồ vật quan trọng sẽ xuất hiện trong cảnh.
+- Ánh sáng tự nhiên, có nguồn rõ ràng, đúng thời điểm trong ngày của kịch bản.
+- Không có người trong ảnh.
+- Không có chữ, nhãn, chú thích hay logo được thêm vào ảnh.`;
 
 export const DEFAULT_HEAL_INSTRUCTION = `Viết lại kịch bản bằng các từ đồng nghĩa để tránh vi phạm. Nhưng vẫn giữ nguyên cốt truyện của kịch bản. Kịch bản mới có số từ bằng kịch bản cũ. Chỉ xuất scene.`;
 
-export const DEFAULT_STORYBOARD_PROMPT = `Professional cinematic storyboard sketch, detailed pencil lines, clear composition, visual guide for the scene action.`;
+// The storyboard image is cut into equal cells (storyboard.ts), so the panels must tile the image
+// exactly: no borders, gutters or margins, which would shift every cut.
+export const DEFAULT_STORYBOARD_PROMPT = `Cinematic storyboard drawn as a grid of equal-size panels that fill the whole image edge to edge, with no borders, gutters or margins. One panel per shot, in reading order (left to right, top to bottom). Clean pencil sketch, clear staging and composition, consistent characters across panels. No captions, numbers or text.`;
 
-export const DEFAULT_LOOP_REWRITE_PROMPT = `Dựa trên kịch bản gốc của cảnh này, hãy viết lại một phiên bản mới với diễn biến khác đi một chút, tăng tính kịch tính hoặc thay đổi góc nhìn nhưng vẫn giữ nguyên nhân vật và bối cảnh. Đảm bảo ngôn ngữ điện ảnh chuyên nghiệp.`;
+export const DEFAULT_LOOP_REWRITE_PROMPT = `Viết lại cảnh này thành một take khác: đổi cách diễn, góc máy hoặc nhịp độ để kịch tính hơn, nhưng giữ nguyên nhân vật, bối cảnh và thoại chính. Giữ nguyên trạng thái mở đầu và kết thúc của cảnh (vị trí, tư thế, ánh sáng) để vẫn nối liền với cảnh trước và cảnh sau. Giữ đúng định dạng SCENE gốc, chỉ xuất scene.`;
 
-export const DEFAULT_IMAGE_PRODUCTION_RULE = `Professional photorealistic cinematography, 8k resolution, high fidelity, cinematic lighting, ultra-detailed textures, highly consistent facial features and environment from references.`;
+export const DEFAULT_IMAGE_PRODUCTION_RULE = `Photorealistic live-action film still. Natural motivated lighting, realistic lens perspective and depth of field, true-to-life skin, hair and fabric texture. Faces, outfits and environment match the reference images exactly. No text or watermarks.`;
 
 export const ADVERSARIAL_MUTATION_PROMPT = `Professional cinematic portrait. Redesign facial features to be 100% unique and strictly non-celebrity. MUST RETAIN identical hair style, eye color, skin texture, clothing, and background from reference. Highest fidelity.`;
 

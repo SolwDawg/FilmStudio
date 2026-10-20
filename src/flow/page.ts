@@ -1,21 +1,45 @@
-import { join } from "node:path";
-import type { Page } from "playwright";
+import { basename, join } from "node:path";
+import type { Locator, Page } from "playwright";
 import {
   CreditLimitError,
   GenerationBlockedError,
   GenerationFailedError,
   LoginRequiredError,
   ManualActionRequiredError,
-  RateLimitedError
+  RateLimitedError,
+  UiContractError
 } from "../errors.js";
 import { artifactBasename, writeArtifactMetadata } from "../output/artifacts.js";
 import { downloadResult, type DownloadQuality } from "./download.js";
 import type { GFlowJob } from "../jobs/schema.js";
 import type { FlowAutomation, FlowAutomationRunInput, FlowJobResult } from "./types.js";
 import { flowLocators } from "./locators.js";
-import { dismissOpenLayers, pickOption, pickModel, confirmPicker, navigateToProject } from "./ui.js";
+import { dismissOpenLayers, pickOption, pickModel, confirmPicker, navigateToProject, projectIdFromUrl, projectSubUrl } from "./ui.js";
 
-export const FLOW_URL = "https://flow.google.com/?pli=1";
+// The project's own page (/project/<id>), as opposed to a clip viewer (/edit/<tile>) or a scene.
+export function isProjectGridUrl(url: string): boolean {
+  return /\/project\/[0-9a-f-]+\/?(?:[?#]|$)/i.test(url);
+}
+
+// Result thumbnails are signed URLs whose ?Expires=&Signature= change on every page load, so the
+// same media must be compared by its path (flow-content.google/image/<id>), not the full URL.
+export function mediaKey(src: string): string {
+  return /^https?:/i.test(src) ? src.split(/[?#]/)[0] : src;
+}
+
+// Sources on the page now whose media was not there before submitting, one per media item.
+export function newResults(current: string[], beforeKeys: Set<string>): string[] {
+  const seen = new Set<string>();
+  return current.filter((src) => {
+    const key = mediaKey(src);
+    if (beforeKeys.has(key) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// hl=en: the engine matches English UI text; see englishUrl() in ui.ts.
+export const FLOW_URL = "https://flow.google.com/?pli=1&hl=en";
 
 // Flow's aspect-ratio buttons render a Material icon ligature prefix; this maps the visible
 // ratio label to that ligature so we can target the right popover button.
@@ -72,7 +96,10 @@ export class FlowPage implements FlowAutomation {
       await navigateToProject(this.page, input.job.project);
       await locators.promptBox.first().waitFor({ state: "visible", timeout: 20000 }).catch(() => undefined);
     } else {
-      await this.ensureProject();
+      // A frame left in the Start/End slot by the previous job survives in-page, so frame jobs
+      // start from a freshly loaded project page (a reload empties the slots).
+      const usesFrames = input.job.type === "video" && Boolean(input.job.startFrame || input.job.endFrame);
+      await this.ensureProject(usesFrames);
     }
     await this.assertReady();
     await this.applySettings(input.job);
@@ -90,7 +117,8 @@ export class FlowPage implements FlowAutomation {
       await this.referenceCharacter(name);
     }
 
-    const before = new Set(await this.resultSrcs(input.job.type));
+    await this.showAllMedia();
+    const before = await this.settledResultKeys(input.job.type);
     await this.fillPrompt(input.job.prompt);
     await this.submit();
 
@@ -173,10 +201,40 @@ export class FlowPage implements FlowAutomation {
     );
   }
 
+  // Uploading a frame switches the project's media filter to "Images" (live-verified), where a new
+  // video tile would never show up. Switch back to "All media" before watching for results.
+  private async showAllMedia(): Promise<void> {
+    const allMedia = this.page.getByRole("button", { name: /all media/i }).first();
+    if ((await allMedia.count()) === 0) return;
+    await allMedia.click({ timeout: 5000 }).catch(() => undefined);
+    await this.page.waitForTimeout(500);
+  }
+
+  // Existing results, read once two consecutive reads agree (max ~3s): thumbnails that are
+  // still lazy-loading when we snapshot would otherwise count as "new" after submitting.
+  private async settledResultKeys(type: "image" | "video"): Promise<Set<string>> {
+    let previous = (await this.resultSrcs(type)).map(mediaKey).sort().join("\n");
+    for (let i = 0; i < 6; i += 1) {
+      await this.page.waitForTimeout(500);
+      const current = (await this.resultSrcs(type)).map(mediaKey).sort().join("\n");
+      if (current === previous) break;
+      previous = current;
+    }
+    return new Set(previous ? previous.split("\n") : []);
+  }
+
   // Enter a project so the prompt box exists. If the editor is already showing (real Flow
   // project or the test fixture), do nothing; otherwise open a fresh project from the dashboard.
-  private async ensureProject(): Promise<void> {
+  private async ensureProject(reload = false): Promise<void> {
     const locators = flowLocators(this.page);
+    // Downloading a result leaves the page on that clip's viewer (/project/<id>/edit/<tile>),
+    // whose prompt box is "Describe how to edit this video". Submitting there EDITS the previous
+    // clip instead of generating a new one, so always go back to the project's own page first.
+    const projectId = projectIdFromUrl(this.page.url());
+    if (projectId && (reload || !isProjectGridUrl(this.page.url()))) {
+      await this.page.goto(projectSubUrl(projectId, ""), { waitUntil: "domcontentloaded" });
+      await locators.promptBox.first().waitFor({ state: "visible", timeout: 20000 }).catch(() => undefined);
+    }
     if ((await locators.promptBox.count()) > 0) return;
     const newProject = this.page.locator("button, [role='button'], div").filter({ hasText: /new project/i }).first();
     if (await newProject.count()) {
@@ -234,33 +292,62 @@ export class FlowPage implements FlowAutomation {
     await dismissOpenLayers(this.page);
   }
 
-  // Frames mode: fill the Start/End frame slot. Clicking the slot opens the Add Media dialog;
-  // "Upload media" triggers a file chooser; the upload is auto-selected, and the dialog's
-  // confirm button ("Add to Prompt") assigns it to the slot and closes the dialog. A slot
-  // already filled has no "Start"/"End" label, so we skip it rather than overwrite.
+  // Frames mode: fill the Start/End frame slot. Live-verified (Oct 2026): clicking the slot opens
+  // a "Select a frame image" popover (<flow-add-menu-popover-content>, NOT role=dialog);
+  // "Upload media" opens a file chooser; Flow may then ask "Rights to use this image"; the upload
+  // appears as a selected [role=option] named after the file; "Add to prompt" assigns it to the
+  // slot, whose "Start"/"End" label is then replaced by the image.
+  //
+  // Every failure here throws BEFORE the prompt is submitted: generating without the requested
+  // frame spends credits on a clip that does not continue from the previous scene.
   private async uploadFrame(slot: "Start" | "End", filePath: string): Promise<void> {
-    const slotEl = this.page.getByText(slot, { exact: true }).first();
-    if ((await slotEl.count()) === 0) return;
-    await slotEl.click().catch(() => undefined);
+    const slotLabel = (): Locator => this.page.getByText(slot, { exact: true }).first();
+    if ((await slotLabel().count()) === 0) {
+      throw new UiContractError(`the ${slot} frame slot is not on the page (Frames mode not selected?)`);
+    }
+    await slotLabel().click();
 
-    const dialog = this.page.locator("[role=dialog],[aria-modal=true]").first();
-    await dialog.waitFor({ state: "visible", timeout: 10000 }).catch(() => undefined);
+    const picker = this.page.locator("flow-add-menu-popover-content, [role=dialog], [aria-modal=true]").filter({ visible: true }).first();
+    await picker.waitFor({ state: "visible", timeout: 10000 }).catch(() => {
+      throw new UiContractError(`clicking the ${slot} frame slot did not open the frame picker`);
+    });
 
-    const uploadButton = dialog.locator("button").filter({ hasText: /upload media/i }).first();
+    const uploadButton = picker.locator("button").filter({ hasText: /upload media/i }).first();
     const [chooser] = await Promise.all([
       this.page.waitForEvent("filechooser", { timeout: 15000 }),
       uploadButton.click()
     ]);
     await chooser.setFiles(filePath);
+    await this.waitForUploadConsent();
 
-    // The freshly uploaded image is auto-selected; wait for that, falling back to selecting
-    // the first tile if needed, then confirm.
-    const selected = dialog.locator('[role=option][aria-selected="true"]').first();
-    await selected.waitFor({ state: "visible", timeout: 30000 }).catch(async () => {
-      await dialog.locator("[role=option]").first().click().catch(() => undefined);
+    // The new upload shows up selected; prefer the option carrying this file's name.
+    const uploaded = picker
+      .locator("[role=option]")
+      .filter({ hasText: basename(filePath) })
+      .or(picker.locator('[role=option][aria-selected="true"]'))
+      .first();
+    await uploaded.waitFor({ state: "visible", timeout: 60000 }).catch(() => {
+      throw new UiContractError(`the uploaded ${slot} frame never appeared in the frame picker`);
     });
+    if ((await uploaded.getAttribute("aria-selected")) !== "true") await uploaded.click();
 
-    await confirmPicker(this.page, dialog);
+    await confirmPicker(this.page, picker);
+    if ((await slotLabel().count()) > 0) {
+      throw new UiContractError(`the ${slot} frame slot is still empty after adding the uploaded image`);
+    }
+  }
+
+  // Flow asks "Rights to use this image" before accepting an upload (at least the first time).
+  // That is the account owner's attestation to make, so we never click it: we wait for the user
+  // to answer it in the Chrome window, and stop if they don't.
+  private async waitForUploadConsent(): Promise<void> {
+    const consent = this.page.getByText(/rights to use this image/i).first();
+    const appeared = await consent.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false);
+    if (!appeared) return;
+    console.log('[gflow] Flow asks you to confirm "Rights to use this image" — answer it in the Chrome window to continue (waiting up to 5 minutes).');
+    await consent.waitFor({ state: "hidden", timeout: 5 * 60_000 }).catch(() => {
+      throw new ManualActionRequiredError('Flow is waiting for you to confirm "Rights to use this image" for the uploaded frame.');
+    });
   }
 
   // Reference a saved character in the current generation.
@@ -299,14 +386,27 @@ export class FlowPage implements FlowAutomation {
       await box.click({ timeout: 5000 }).catch(() => box.evaluate((el) => (el as HTMLElement).focus()));
     });
     await this.page.waitForTimeout(300);
-    await box.press("ControlOrMeta+a").catch(() => undefined);
-    await box.press("Backspace").catch(() => undefined);
-    await box.pressSequentially(prompt, { delay: 12 });
-    await this.page.waitForTimeout(500);
+    const clear = async (): Promise<void> => {
+      await box.press("ControlOrMeta+a").catch(() => undefined);
+      await box.press("Backspace").catch(() => undefined);
+    };
+    const textPresent = (): Promise<boolean> =>
+      box.evaluate((el) => ((el as HTMLTextAreaElement).value ?? el.textContent ?? "").trim().length > 0).catch(() => false);
 
-    // Verify text is present in the prompt box
-    const textPresent = await box.evaluate((el) => (el.textContent || "").trim().length > 0).catch(() => false);
-    if (!textPresent) {
+    // Paste the whole prompt as one trusted input event. Typing it key by key took 30-60s for a
+    // scene prompt (style + cast + location + action is often 2,000+ characters).
+    await clear();
+    await this.page.keyboard.insertText(prompt);
+    await this.page.waitForTimeout(300);
+
+    if (!(await textPresent())) {
+      console.log("[gflow] Fallback: typing the prompt key by key");
+      await clear();
+      await box.pressSequentially(prompt, { delay: 12 });
+      await this.page.waitForTimeout(500);
+    }
+
+    if (!(await textPresent())) {
       console.log("[gflow] Fallback: setting innerText of prompt box directly");
       await box.evaluate((el, p) => {
         el.textContent = p;
@@ -352,7 +452,7 @@ export class FlowPage implements FlowAutomation {
       }
 
       const allCurrent = await this.resultSrcs(type);
-      const added = allCurrent.filter((src) => !before.has(src));
+      const added = newResults(allCurrent, before);
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       if (elapsed - lastLog >= 10) {
         console.log(`[gflow] Waiting for ${type} result... (${elapsed}s elapsed, detected ${allCurrent.length} total, ${added.length} new)`);
@@ -362,7 +462,7 @@ export class FlowPage implements FlowAutomation {
       await this.page.waitForTimeout(1500);
     }
 
-    const added = (await this.resultSrcs(type)).filter((src) => !before.has(src));
+    const added = newResults(await this.resultSrcs(type), before);
     if (added.length > 0) return added;
     throw new GenerationFailedError(`Timed out waiting for ${expected} result(s).`);
   }

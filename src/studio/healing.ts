@@ -1,5 +1,4 @@
 import { DEFAULT_HEAL_INSTRUCTION } from "./prompts.js";
-import { isSafetyViolation } from "./adversarial.js";
 
 export interface HealAttemptResult {
   healedText: string;

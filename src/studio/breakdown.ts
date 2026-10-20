@@ -1,4 +1,4 @@
-import { DEFAULT_STORY_PROMPT } from "./prompts.js";
+import { DEFAULT_STORY_PROMPT, DURATION_PLACEHOLDER } from "./prompts.js";
 
 export interface ShotDetail {
   number: number;
@@ -54,10 +54,14 @@ export function chunkStory(text: string, wordsPerChunk = 150): string[] {
 }
 
 /**
- * Builds the full instruction prompt for Gemini to break down a story chunk into a 10s cinematic scene.
+ * Builds the full instruction prompt for an LLM to break a story chunk down into SCENEs,
+ * each sized for one `durationSeconds` clip (the project's `film.duration`).
  */
-export function buildStoryChunkPrompt(chunk: string, customPrompt = DEFAULT_STORY_PROMPT): string {
-  return `${customPrompt.trim()}
+export function buildStoryChunkPrompt(chunk: string, customPrompt?: string, durationSeconds = 8): string {
+  const instructions = (customPrompt?.trim() ? customPrompt : DEFAULT_STORY_PROMPT)
+    .trim()
+    .replaceAll(DURATION_PLACEHOLDER, String(durationSeconds));
+  return `${instructions}
 
 --- VĂN BẢN TRUYỆN / Ý TƯỞNG CẦN PHÂN TÍCH: ---
 ${chunk.trim()}
@@ -140,7 +144,8 @@ function extractShotsFromBlock(text: string): ShotDetail[] {
     const content = match[2].trim();
 
     // Check for dialogue: "Name: text" or Name: "text"
-    const dialogueMatch = content.match(/([A-ZÀ-Ỹa-zà-ỹ0-9_ ]+)\s*[:–]\s*["“]([^"”]+)["”]/);
+    // Speaker names may be hyphenated ("Seo-yeon").
+    const dialogueMatch = content.match(/([A-ZÀ-Ỹa-zà-ỹ0-9_ -]+)\s*[:–]\s*["“]([^"”]+)["”]/);
 
     shots.push({
       number: num,

@@ -8,7 +8,8 @@ describe("CharacterPage", () => {
     const page = await browser.newPage();
 
     try {
-      await page.route("**/fx/tools/flow/project/abc", async (route) => {
+      // The engine adds ?hl=en to every Flow URL, so routes allow an optional query string.
+      await page.route(/\/fx\/tools\/flow\/project\/abc(\?.*)?$/, async (route) => {
         await route.fulfill({
           contentType: "text/html",
           body: `
@@ -23,7 +24,7 @@ describe("CharacterPage", () => {
           `
         });
       });
-      await page.route("**/fx/tools/flow/project/abc/characters", async (route) => {
+      await page.route(/\/fx\/tools\/flow\/project\/abc\/characters(\?.*)?$/, async (route) => {
         await route.fulfill({
           contentType: "text/html",
           body: `

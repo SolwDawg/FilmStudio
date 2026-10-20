@@ -74,8 +74,10 @@ ${contextParts}
  * Builds the 360° Character DNA Bible image generation prompt.
  * Generates front, 3/4, profile, back, and close-up views on Chroma key green.
  */
-export function buildActorDnaImagePrompt(actor: { name: string; traits?: string; roles?: string[] }, customPrompt = DEFAULT_DIRECTIONAL_PROMPT): string {
-  return `${customPrompt.trim()}
+export function buildActorDnaImagePrompt(actor: { name: string; traits?: string; roles?: string[] }, customPrompt?: string): string {
+  // An empty project setting (e.g. a cleared dashboard field) falls back to the default.
+  const instructions = customPrompt?.trim() ? customPrompt : DEFAULT_DIRECTIONAL_PROMPT;
+  return `${instructions.trim()}
 
 --- THÔNG TIN NHÂN VẬT THIẾT KẾ ---
 Tên nhân vật: ${actor.name}
@@ -88,8 +90,9 @@ ${actor.traits ? `Đặc điểm nhận diện & phục trang: ${actor.traits}` 
  * Builds the Architectural Location Reference Sheet image generation prompt.
  * Generates an ultra-wide cinema architectural sheet with no characters present.
  */
-export function buildLocationDnaImagePrompt(location: { name: string; traits?: string }, customPrompt = DEFAULT_LOCATION_DIRECTIONAL_PROMPT): string {
-  return `${customPrompt.trim()}
+export function buildLocationDnaImagePrompt(location: { name: string; traits?: string }, customPrompt?: string): string {
+  const instructions = customPrompt?.trim() ? customPrompt : DEFAULT_LOCATION_DIRECTIONAL_PROMPT;
+  return `${instructions.trim()}
 
 --- THÔNG TIN BỐI CẢNH THIẾT KẾ ---
 Tên bối cảnh: ${location.name}

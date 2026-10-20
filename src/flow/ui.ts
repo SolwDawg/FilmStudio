@@ -134,13 +134,27 @@ export async function dismissOpenLayers(page: Page): Promise<void> {
 export const FLOW_BASE = "https://labs.google/fx/tools/flow";
 export type ProjectSub = "" | "characters" | "tools" | "create-tool";
 
+// Flow renders in the Google account's language (Spanish, French, ...), but the selectors in
+// this engine match the English UI text ("New project", "Frames", "Add to Prompt", ...).
+// `hl=en` forces English for that page load only — it does not persist — so every URL the
+// engine navigates to goes through here.
+export function englishUrl(url: string): string {
+  const parsed = new URL(url);
+  parsed.searchParams.set("hl", "en");
+  return parsed.toString();
+}
+
+export function isFlowProjectId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
 export function projectIdFromUrl(url: string): string | undefined {
   const m = url.match(/\/project\/([0-9a-f-]+)/i);
   return m ? m[1] : undefined;
 }
 
 export function projectSubUrl(projectId: string, sub: ProjectSub): string {
-  return `${FLOW_BASE}/project/${projectId}${sub ? `/${sub}` : ""}`;
+  return englishUrl(`${FLOW_BASE}/project/${projectId}${sub ? `/${sub}` : ""}`);
 }
 
 // Ensure the page is inside a project and return its id. When `projectName` is given,
@@ -150,11 +164,27 @@ export async function navigateToProject(page: Page, projectName?: string): Promi
   const current = projectIdFromUrl(page.url());
   if (!projectName && current) return current;
 
+  // A project id (what film.json's flowProjectId stores) opens directly, no dashboard search.
+  if (projectName && isFlowProjectId(projectName)) {
+    await page.goto(projectSubUrl(projectName, ""), { waitUntil: "domcontentloaded" });
+    // A missing project first renders at its own URL, then redirects to /404?reason=project a few
+    // seconds later (live-verified), so wait for the editor or that redirect before deciding.
+    await Promise.race([
+      page.locator('[contenteditable="true"]').first().waitFor({ state: "visible", timeout: 20000 }),
+      page.waitForURL(/\/404\b/, { timeout: 20000 })
+    ]).catch(() => undefined);
+    const opened = projectIdFromUrl(page.url());
+    if (opened?.toLowerCase() !== projectName.toLowerCase()) {
+      throw new Error(`Could not open Flow project ${projectName} (was it deleted?). Remove flowProjectId from film.json to start a new one.`);
+    }
+    return opened;
+  }
+
   if (projectName) {
     // The dashboard renders each project as a thumbnail <a href="â€¦/project/<id>"> with the
     // name/timestamp in a sibling label (projects are named by timestamp unless renamed),
     // so match the card whose surrounding label contains the name and open it by href.
-    await page.goto(FLOW_BASE, { waitUntil: "domcontentloaded" });
+    await page.goto(englishUrl(FLOW_BASE), { waitUntil: "domcontentloaded" });
     await page.locator('a[href*="/project/"]').first().waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
     const href = await page.evaluate((name) => {
       const linkSel = 'a[href*="/project/"]';
@@ -170,7 +200,7 @@ export async function navigateToProject(page: Page, projectName?: string): Promi
       return null;
     }, projectName);
     if (!href) throw new Error(`Could not find a Flow project matching "${projectName}".`);
-    await page.goto(new URL(href, FLOW_BASE).toString(), { waitUntil: "domcontentloaded" });
+    await page.goto(englishUrl(new URL(href, FLOW_BASE).toString()), { waitUntil: "domcontentloaded" });
     await page.waitForURL(/\/project\/[0-9a-f-]+/i, { timeout: 20000 }).catch(() => undefined);
     const opened = projectIdFromUrl(page.url());
     if (!opened) throw new Error(`Could not open project "${projectName}".`);
@@ -197,7 +227,7 @@ export async function resolveExistingProject(page: Page, projectName?: string): 
   const current = projectIdFromUrl(page.url());
   if (current) return current;
 
-  await page.goto(FLOW_BASE, { waitUntil: "domcontentloaded" });
+  await page.goto(englishUrl(FLOW_BASE), { waitUntil: "domcontentloaded" });
   const firstCard = page.locator('a[href*="/project/"]').first();
   await firstCard.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
   const href = await firstCard.getAttribute("href").catch(() => null);

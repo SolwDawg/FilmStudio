@@ -1,5 +1,4 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError } from "commander";
 import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, type BrowserChannel } from "../browser/session.js";
@@ -20,10 +19,8 @@ import {
 import { scenesFromScript } from "./script.js";
 import { startDashboard } from "./server.js";
 import { openFlowAutomation } from "./session.js";
-import { chunkStory, buildStoryChunkPrompt, parseStructuredScript } from "./breakdown.js";
-import { buildActorDnaImagePrompt, buildAssetExtractionPrompt, createSlidingSceneWindows, mergeDiscoveredActors } from "./dna.js";
-import { getCdpEndpoint, injectCleanApplet, launchChromeWithCdp, listCdpTargets } from "./cdp.js";
-import { buildApplet } from "../applet/build.js";
+import { chunkStory, buildStoryChunkPrompt } from "./breakdown.js";
+import { buildActorDnaImagePrompt } from "./dna.js";
 
 export interface CreateStudioProgramOptions {
   // Tests inject a fake instead of driving a real browser.
@@ -35,6 +32,12 @@ function parseBrowser(value: string): BrowserChannel {
     throw new InvalidArgumentError(`must be one of: ${BROWSER_CHANNELS.join(", ")}`);
   }
   return value as BrowserChannel;
+}
+
+function parseCount(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new InvalidArgumentError("must be a non-negative integer");
+  return parsed;
 }
 
 function collect(value: string, previous: string[]): string[] {
@@ -85,14 +88,15 @@ export function createStudioProgram(options: CreateStudioProgramOptions = {}): C
     .argument("<story>", "story or prose text file")
     .option("-o, --output <file>", "write breakdown prompts or parsed script to a file")
     .option("--chunk-words <n>", "words per chunk", (val) => Number.parseInt(val, 10), 150)
-    .action(async (storyFile: string, command: { output?: string; chunkWords: number }) => {
+    .option("--duration <s>", "seconds per scene clip the script is written for", (val) => Number.parseInt(val, 10), 8)
+    .action(async (storyFile: string, command: { output?: string; chunkWords: number; duration: number }) => {
       const text = await readFile(storyFile, "utf8");
       const chunks = chunkStory(text, command.chunkWords);
       console.log(`Story analyzed: ${chunks.length} chunks generated (~${command.chunkWords} words each).`);
 
       let fullPromptBundle = "";
       for (let i = 0; i < chunks.length; i++) {
-        fullPromptBundle += `\n\n=== CHUNK ${i + 1}/${chunks.length} ===\n${buildStoryChunkPrompt(chunks[i])}`;
+        fullPromptBundle += `\n\n=== CHUNK ${i + 1}/${chunks.length} ===\n${buildStoryChunkPrompt(chunks[i], undefined, command.duration)}`;
       }
 
       if (command.output) {
@@ -138,57 +142,9 @@ export function createStudioProgram(options: CreateStudioProgramOptions = {}): C
       const film = await loadFilm(paths);
       const char = film.characters.find((c) => c.name.toLowerCase() === name.toLowerCase());
       if (!char) throw new Error(`Character "${name}" not found in project "${slug}"`);
-      const dnaPrompt = buildActorDnaImagePrompt({ name: char.name, traits: char.description });
+      const dnaPrompt = buildActorDnaImagePrompt({ name: char.name, traits: char.description }, film.directionalPrompt);
       console.log(`\n=== 360° VISUAL IDENTITY BIBLE PROMPT FOR ${char.name.toUpperCase()} ===\n`);
       console.log(dnaPrompt);
-    });
-
-  program
-    .command("launch")
-    .description("Launch Google Chrome on remote debugging port 9222 for Google Flow.")
-    .option("--port <n>", "debugging port", (val) => Number.parseInt(val, 10), 9222)
-    .option("--url <url>", "initial URL", "https://flow.google.com/?pli=1")
-    .action((command: { port: number; url: string }) => {
-      launchChromeWithCdp(command.port, command.url);
-      console.log(`Launched Chrome with remote debugging on port ${command.port} -> ${command.url}`);
-    });
-
-  program
-    .command("inject")
-    .description("Inject clean Studio Applet bundle into Google Flow iframe via CDP.")
-    .option("--port <n>", "CDP port", (val) => Number.parseInt(val, 10), 9222)
-    .option("--force", "force reinjection", false)
-    .action(async (command: { port: number; force: boolean }) => {
-      const endpoint = await getCdpEndpoint(command.port);
-      if (!endpoint) throw new Error(`Chrome CDP is not running on port ${command.port}. Run \`film launch\` first.`);
-
-      const dataUrlPath = resolve(process.cwd(), "dist/applet.dataurl.txt");
-      let dataUrl = "";
-      if (!existsSync(dataUrlPath)) {
-        console.log("Building clean Applet bundle first...");
-        const res = await buildApplet();
-        dataUrl = readFileSync(res.dataUrlPath, "utf8");
-      } else {
-        dataUrl = readFileSync(dataUrlPath, "utf8");
-      }
-
-      const targets = await listCdpTargets(endpoint);
-      const iframes = targets.filter((t) => t.type === "iframe" && t.url?.includes("scf.usercontent.goog"));
-      if (iframes.length === 0) {
-        throw new Error("No Google Flow tool iframe found. Open or select a tool in Flow first.");
-      }
-
-      let count = 0;
-      for (const iframe of iframes) {
-        if (iframe.webSocketDebuggerUrl) {
-          const res = await injectCleanApplet(iframe.webSocketDebuggerUrl, dataUrl, command.force);
-          if (res.success) {
-            count++;
-            console.log(`Injected into iframe: ${iframe.id} -> ${res.state}`);
-          }
-        }
-      }
-      console.log(`Injection completed: ${count} iframe(s) active.`);
     });
 
   program
@@ -230,29 +186,59 @@ export function createStudioProgram(options: CreateStudioProgramOptions = {}): C
     .option("--scene <id>", "render only this scene (repeatable)", collect, [] as string[])
     .option("--force", "re-render scenes that are already done", false)
     .option("--no-continuity", "do not seed scenes with the previous last frame")
-    .option("--no-heal", "disable auto-healing of safety filtered prompts")
-    .option("--max-retries <n>", "max auto-heal retries", (val) => Number.parseInt(val, 10), 5)
+    .option("--continue-on-error", "after a failed scene, skip the scenes chained to it and keep rendering from the next [CUT]", false)
+    .option("--max-retries <n>", "retries for transient Flow/UI failures (default: film.json maxRetries, else 2)", parseCount)
     .option("--profile <name>", "browser profile name", "default")
     .option("--browser <name>", "browser channel: chrome or chromium", parseBrowser, DEFAULT_BROWSER_CHANNEL)
     .option("--headed", "show browser", true)
     .option("--no-headed", "run browser headless")
-    .action(async (slug: string, command: { scene: string[]; force: boolean; continuity: boolean; heal: boolean; maxRetries: number; profile: string; browser: BrowserChannel; headed: boolean }) => {
+    .action(async (slug: string, command: { scene: string[]; force: boolean; continuity: boolean; continueOnError: boolean; maxRetries?: number; profile: string; browser: BrowserChannel; headed: boolean }) => {
       const paths = projectPaths(slug);
       const owned = options.automation
         ? { automation: options.automation, close: async () => undefined }
         : await openFlowAutomation({ profile: command.profile, headed: command.headed, browser: command.browser });
+
+      // Ctrl+C, or "stop" from the dashboard (which spawns this command with an IPC channel):
+      // abort, and disconnect the browser so an in-flight Flow wait ends right away.
+      const controller = new AbortController();
+      const stop = (): void => {
+        if (controller.signal.aborted) return;
+        console.log("stopping render...");
+        controller.abort(new Error("Render stopped"));
+        void owned.close().catch(() => undefined);
+      };
+      const onMessage = (message: unknown): void => {
+        if (message === "stop") stop();
+      };
+      // Only the dashboard's child process owns its IPC channel (test runners fork workers too).
+      const dashboardChild = process.env.FILM_RENDER_IPC === "1" && typeof process.send === "function";
+      process.once("SIGINT", stop);
+      if (dashboardChild) process.on("message", onMessage);
+
       try {
-        await renderFilm(paths, {
+        const result = await renderFilm(paths, {
           automation: owned.automation,
           only: command.scene.length > 0 ? command.scene : undefined,
           force: command.force,
-          continuity: command.continuity,
-          autoHeal: command.heal,
-          maxAutoRetries: command.maxRetries,
+          // commander defaults the flag to true; only an explicit --no-continuity overrides film.json.
+          continuity: command.continuity === false ? false : undefined,
+          continueOnError: command.continueOnError,
+          maxRetries: command.maxRetries,
+          signal: controller.signal,
           log: (message) => console.log(message)
         });
+        if (result.failed.length > 0) {
+          const skipped = result.skipped.length > 0 ? `; skipped (chained to a failed scene): ${result.skipped.join(", ")}` : "";
+          throw new Error(`failed: ${result.failed.join(", ")}${skipped}`);
+        }
       } finally {
-        await owned.close();
+        process.off("SIGINT", stop);
+        if (dashboardChild) {
+          process.off("message", onMessage);
+          // An open IPC channel would keep this process alive after the render ends.
+          process.disconnect?.();
+        }
+        if (!controller.signal.aborted) await owned.close();
       }
     });
 
@@ -262,13 +248,15 @@ export function createStudioProgram(options: CreateStudioProgramOptions = {}): C
     .argument("<project>", "project name")
     .option("-o, --output <file>", "output file (default: <project>/final.mp4)")
     .option("--normalize", "normalize video streams to 30fps/yuv420p before concat", false)
-    .action(async (slug: string, command: { output?: string; normalize: boolean }) => {
+    .option("--only-rendered", "join only the scenes rendered so far (preview), skipping the rest", false)
+    .action(async (slug: string, command: { output?: string; normalize: boolean; onlyRendered: boolean }) => {
       const result = await stitchFilm(
         projectPaths(slug),
         command.output ? resolve(command.output) : undefined,
-        { normalize: command.normalize }
+        { normalize: command.normalize, onlyRendered: command.onlyRendered }
       );
-      console.log(`stitched ${result.clips} scenes (${result.mode}) -> ${result.output}`);
+      const skipped = result.skipped.length > 0 ? `; skipped (not rendered): ${result.skipped.join(", ")}` : "";
+      console.log(`stitched ${result.clips} scenes (${result.mode}) -> ${result.output}${skipped}`);
     });
 
   program

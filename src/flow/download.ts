@@ -1,9 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import type { BrowserContext, Download, Locator, Page } from "playwright";
-import { GenerationFailedError, ManualActionRequiredError } from "../errors.js";
+import { DownloadError, GenerationFailedError, ManualActionRequiredError } from "../errors.js";
 
 export type DownloadQuality = "original" | "2k" | "4k";
+
+// How long a Download click may take to start a browser download. A click that starts nothing
+// falls through to the direct-fetch paths, so this only bounds the wasted wait.
+export const DOWNLOAD_EVENT_TIMEOUT_MS = 30_000;
 
 export function mediaIdFromSrc(src: string): string | undefined {
   const m = src.match(/[?&]name=([0-9a-f-]+)/i);
@@ -81,6 +85,10 @@ export async function downloadResult(input: DownloadInput): Promise<DownloadOutp
         return { assetPath };
       }
     }
+
+    // The image fallback below would click an arbitrary image and could save a thumbnail as .mp4.
+    if (isVideoSource(src)) return fallbackFetch(input);
+    throw new DownloadError(opened ? "the video viewer opened but exposed no downloadable stream" : "could not find the generated video's tile on the page");
   }
 
   // Image or fallback
@@ -116,12 +124,14 @@ async function openViewerForVideo(page: Page, src: string): Promise<boolean> {
     return true;
   }
 
-  const anyTile = page.locator("flow-video-tile, #results video, video").first();
-  if (await anyTile.count()) {
-    await anyTile.click({ force: true }).catch(() => undefined);
-    return true;
-  }
+  // Deliberately no "first video on the page" fallback: that can be an older clip, and a wrong
+  // clip silently breaks frame continuity for every scene after it.
   return false;
+}
+
+// A video result's `src` is usually its tile's thumbnail image; only these point at the video itself.
+function isVideoSource(src: string): boolean {
+  return src.startsWith("data:video") || src.startsWith("blob:") || /\.(mp4|webm|mov)(\?|$)/i.test(src) || src.includes("flow-content.google");
 }
 
 async function openViewerForImage(page: Page, src: string): Promise<boolean> {
@@ -154,7 +164,7 @@ async function downloadViaMenu(input: DownloadInput): Promise<DownloadOutput | u
 
   if (!hasMenu) {
     const [download] = await Promise.all([
-      page.waitForEvent("download", { timeout: 180000 }).catch(() => null),
+      page.waitForEvent("download", { timeout: DOWNLOAD_EVENT_TIMEOUT_MS }).catch(() => null),
       btn.click().catch(() => null)
     ]);
     if (download) return saveDownload(input, download);
@@ -187,7 +197,7 @@ async function downloadViaMenu(input: DownloadInput): Promise<DownloadOutput | u
     return undefined;
   }
   const [download] = await Promise.all([
-    page.waitForEvent("download", { timeout: 180000 }).catch(() => null),
+    page.waitForEvent("download", { timeout: DOWNLOAD_EVENT_TIMEOUT_MS }).catch(() => null),
     page.locator('[data-gflow-dl="1"]').first().click().catch(() => null)
   ]);
   if (download) return saveDownload(input, download);

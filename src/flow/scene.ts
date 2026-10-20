@@ -9,7 +9,7 @@ import {
 import { artifactBasename, writeArtifactMetadata } from "../output/artifacts.js";
 import { flowLocators } from "./locators.js";
 import type { ExtendSceneInput, ExtendSceneResult, SceneAutomation, SceneSummary } from "./types.js";
-import { FLOW_BASE, dismissOpenLayers, resolveExistingProject } from "./ui.js";
+import { FLOW_BASE, dismissOpenLayers, englishUrl, resolveExistingProject } from "./ui.js";
 
 // All selectors below were verified against the live scenebuilder UI:
 // - A video card on the project page links to /project/<id>/edit/<tileId>; opening it
@@ -39,7 +39,7 @@ export class ScenePage implements SceneAutomation {
 
   async listScenes(project?: string): Promise<SceneSummary[]> {
     const projectId = await resolveExistingProject(this.page, project);
-    await this.page.goto(`${FLOW_BASE}/project/${projectId}`, { waitUntil: "domcontentloaded" });
+    await this.page.goto(englishUrl(`${FLOW_BASE}/project/${projectId}`), { waitUntil: "domcontentloaded" });
     await this.page.waitForTimeout(1500);
 
     return this.page.evaluate(() => {
@@ -92,9 +92,9 @@ export class ScenePage implements SceneAutomation {
     const projectId = await resolveExistingProject(this.page, input.project);
 
     if (input.scene) {
-      await this.page.goto(`${FLOW_BASE}/project/${projectId}/scene/${input.scene}`, { waitUntil: "domcontentloaded" });
+      await this.page.goto(englishUrl(`${FLOW_BASE}/project/${projectId}/scene/${input.scene}`), { waitUntil: "domcontentloaded" });
     } else {
-      await this.page.goto(`${FLOW_BASE}/project/${projectId}`, { waitUntil: "domcontentloaded" });
+      await this.page.goto(englishUrl(`${FLOW_BASE}/project/${projectId}`), { waitUntil: "domcontentloaded" });
       await this.page.waitForTimeout(1500);
       const href = await this.page.evaluate((id) => {
         for (const a of [...document.querySelectorAll('a[href*="/edit/"]')]) {
@@ -110,7 +110,7 @@ export class ScenePage implements SceneAutomation {
           `Video "${input.mediaId}" not found in the project. Use \`gflow media list\` to find video ids.`
         );
       }
-      await this.page.goto(new URL(href, FLOW_BASE).toString(), { waitUntil: "domcontentloaded" });
+      await this.page.goto(englishUrl(new URL(href, FLOW_BASE).toString()), { waitUntil: "domcontentloaded" });
     }
 
     // Scenebuilder is ready once the timeline "+" button renders.

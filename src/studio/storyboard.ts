@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { ffmpeg } from "./ffmpeg.js";
+import { join } from "node:path";
+import { ffmpeg, probeImageSize } from "./ffmpeg.js";
 
 export interface GridDimensions {
   rows: number;
@@ -53,17 +53,17 @@ export function calculateGridSlices(
 
 /**
  * Executes multi-crop slicing on a storyboard grid image using native FFmpeg.
+ * The grid is computed from the image's real size (read with ffprobe).
  */
 export async function cropStoryboardGrid(
   inputImagePath: string,
-  totalWidth: number,
-  totalHeight: number,
   grid: GridDimensions,
   outputDir: string,
   prefix = "shot"
 ): Promise<string[]> {
   await mkdir(outputDir, { recursive: true });
-  const slices = calculateGridSlices(totalWidth, totalHeight, grid, outputDir, prefix);
+  const { width, height } = await probeImageSize(inputImagePath);
+  const slices = calculateGridSlices(width, height, grid, outputDir, prefix);
   const outputFiles: string[] = [];
 
   for (const slice of slices) {

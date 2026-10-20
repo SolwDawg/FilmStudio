@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { chunkStory, buildStoryChunkPrompt, parseStructuredScript } from "../src/studio/breakdown.js";
 import {
   createSlidingSceneWindows,
-  buildAssetExtractionPrompt,
   buildActorDnaImagePrompt,
   buildLocationDnaImagePrompt,
   mergeDiscoveredActors
@@ -11,10 +10,30 @@ import { isSafetyViolation, isCelebrityViolation, buildAdversarialMutationPrompt
 import {
   calculateExponentialBackoff,
   buildSelfHealingPrompt,
-  cleanHealedResponse,
-  countWords
+  cleanHealedResponse
 } from "../src/studio/healing.js";
 import { calculateGridSlices } from "../src/studio/storyboard.js";
+import { encoderArgs } from "../src/studio/ffmpeg.js";
+import { scenesFromScript } from "../src/studio/script.js";
+import {
+  DEFAULT_DIRECTIONAL_PROMPT,
+  DEFAULT_LOCATION_DIRECTIONAL_PROMPT,
+  DEFAULT_STORYBOARD_PROMPT,
+  DEFAULT_STORY_PROMPT,
+  DEFAULT_VIDEO_STYLE,
+  DURATION_PLACEHOLDER
+} from "../src/studio/prompts.js";
+
+describe("ffmpeg encoder arguments", () => {
+  it("uses each encoder's own quality options", () => {
+    expect(encoderArgs("libx264")).toEqual(expect.arrayContaining(["-crf", "18"]));
+    expect(encoderArgs("h264_nvenc")).toEqual(expect.arrayContaining(["-cq", "19"]));
+    expect(encoderArgs("h264_nvenc")).not.toContain("-crf");
+    // -preset p4 only exists on NVENC; QSV needs nv12 input.
+    expect(encoderArgs("h264_amf")).not.toContain("p4");
+    expect(encoderArgs("h264_qsv")).toEqual(expect.arrayContaining(["-pix_fmt", "nv12"]));
+  });
+});
 
 describe("Script Breakdown Engine", () => {
   it("chunks story into approximate word limits respecting sentence boundaries", () => {
@@ -31,8 +50,47 @@ describe("Script Breakdown Engine", () => {
 
   it("builds story chunk prompt with system instruction", () => {
     const prompt = buildStoryChunkPrompt("Nam và Lan gặp nhau ở bờ hồ.");
-    expect(prompt).toContain("Phân tích truyện");
+    expect(prompt).toContain("SCENE <số>:");
+    expect(prompt).toContain("[CUT]");
     expect(prompt).toContain("Nam và Lan gặp nhau ở bờ hồ.");
+  });
+
+  it("sizes the story prompt to the project's clip length", () => {
+    const prompt = buildStoryChunkPrompt("x", undefined, 6);
+    expect(prompt).toContain("khoảng 6 giây");
+    expect(prompt).not.toContain(DURATION_PLACEHOLDER);
+    // An empty project setting falls back to the default instead of sending no instructions.
+    expect(buildStoryChunkPrompt("x", "   ")).toContain("SCENE <số>:");
+  });
+
+  it("the story prompt's own example imports cleanly through both parsers", () => {
+    // The example block: the first "SCENE 1:" at the start of a line (rule 1 mentions it inline).
+    const example = DEFAULT_STORY_PROMPT.slice(DEFAULT_STORY_PROMPT.indexOf("\nSCENE 1:") + 1);
+    const cast = [
+      { name: "Min-woo", description: "", aliases: [], images: [] },
+      { name: "Seo-yeon", description: "", aliases: [], images: [] }
+    ];
+
+    const scenes = scenesFromScript(example, cast);
+    expect(scenes.map((scene) => scene.cut)).toEqual([false, false, true]);
+    expect(scenes.map((scene) => scene.characters)).toEqual([["Min-woo"], ["Seo-yeon"], ["Seo-yeon"]]);
+
+    const structured = parseStructuredScript(example);
+    expect(structured).toHaveLength(3);
+    expect(structured[1].location).toBe("Ngã tư Gangnam đêm mưa");
+    expect(structured[1].shots).toHaveLength(1);
+    expect(structured[1].shots[0].dialogue).toEqual({ speaker: "Seo-yeon", text: "Là anh thật sao?" });
+    expect(structured[2].cut).toBe(true);
+  });
+
+  it("keeps generation prompts free of on-image text and fixed looks", () => {
+    for (const prompt of [DEFAULT_DIRECTIONAL_PROMPT, DEFAULT_LOCATION_DIRECTIONAL_PROMPT]) {
+      expect(prompt).not.toMatch(/Ghi rõ|DNA giọng nói|chân dài|xinh xắn/i);
+      expect(prompt).toContain("Không có chữ");
+    }
+    expect(DEFAULT_STORYBOARD_PROMPT).toMatch(/no borders, gutters or margins/);
+    // film.style is prepended to every scene's video prompt, so it must stay short.
+    expect(DEFAULT_VIDEO_STYLE.split(/\s+/).length).toBeLessThanOrEqual(60);
   });
 
   it("parses structured SCENE format into scene nodes", () => {
@@ -82,14 +140,20 @@ describe("Visual DNA & Identity Engine", () => {
   it("builds 360 chroma key prompt for actor", () => {
     const prompt = buildActorDnaImagePrompt({ name: "Minh", traits: "25 tuổi, áo sơ mi trắng", roles: ["Nhân vật chính"] });
     expect(prompt).toContain("Phông nền xanh chroma key");
-    expect(prompt).toContain("Toàn thân chính diện");
-    expect(prompt).toContain("Góc 3/4");
+    expect(prompt).toContain("toàn thân chính diện");
+    expect(prompt).toContain("góc 3/4");
     expect(prompt).toContain("Minh");
+  });
+
+  it("uses the project's directional prompt, falling back to the default when empty", () => {
+    const custom = buildActorDnaImagePrompt({ name: "Minh" }, "PROJECT RULE");
+    expect(custom.startsWith("PROJECT RULE")).toBe(true);
+    expect(buildActorDnaImagePrompt({ name: "Minh" }, "")).toContain("Phông nền xanh chroma key");
   });
 
   it("builds architectural location sheet prompt", () => {
     const prompt = buildLocationDnaImagePrompt({ name: "Penthouse Sang Trọng", traits: "Kính kịch trần, tone xám đen" });
-    expect(prompt).toContain("KHÔNG có nhân vật đứng trong ảnh");
+    expect(prompt).toContain("Không có người trong ảnh");
     expect(prompt).toContain("Penthouse Sang Trọng");
   });
 

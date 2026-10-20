@@ -679,14 +679,6 @@ export const DASHBOARD_HTML = `<!doctype html>
       <span>🔗 Continuity</span>
     </div>
 
-    <div class="toggle-btn active purple" id="togAutoHeal" title="Tự động gọi Gemini viết lại kịch bản khi dính kiểm duyệt chính sách (23 keywords)">
-      <span>🩹 Auto-Heal</span>
-    </div>
-
-    <div class="toggle-btn active pink" id="togCelebCheck" title="Thăm dò an toàn người nổi tiếng qua Omni Flash 4s + Nano Banana Pro">
-      <span>🛡️ Celeb Check</span>
-    </div>
-
     <div class="toggle-btn" id="togStrictActor" title="Chỉ nạp diễn viên khi kịch bản nhắc chính xác tên (tránh vẽ thừa người)">
       <span>🎯 Strict Actor</span>
     </div>
@@ -765,19 +757,20 @@ Ví dụ:
           </div>
           <div style="display:flex; gap:6px;">
             <button id="btnResetScriptOnly" class="danger">🗑️ Reset Kịch Bản</button>
-            <button id="btnRunBreakdown" class="primary">⚡ Phân Rã Kịch Bản Chuẩn 10s</button>
+            <button id="btnRunBreakdown" class="primary">⚡ Phân Rã Kịch Bản</button>
           </div>
         </div>
       </div>
 
       <div class="panel">
         <div class="panel-header">
-          <div class="panel-title">🎨 Hollywood DOP / Live-Action System Prompt</div>
-          <div class="panel-subtitle">Chỉ thị điện ảnh điều khiển chất lượng ánh sáng, da, nếp vải & diễn xuất</div>
+          <div class="panel-title">🎨 Style Video (chèn vào đầu prompt của mọi cảnh)</div>
+          <div class="panel-subtitle">Giữ ngắn (dưới ~60 từ) và chỉ mô tả hình ảnh: mô hình video không làm theo chỉ thị hay vai trò, chữ nào cũng bị coi là thứ cần vẽ</div>
         </div>
-        <textarea id="sysPromptInput" rows="16" placeholder="Hollywood DOP Prompt..."></textarea>
-        <div style="display:flex; justify-content:flex-end;">
-          <button id="btnSaveSysPrompt" class="accent">💾 Lưu System Prompt</button>
+        <textarea id="sysPromptInput" rows="6"></textarea>
+        <div style="display:flex; justify-content:space-between; gap:8px;">
+          <button id="btnResetSysPrompt">↺ Dùng style mặc định</button>
+          <button id="btnSaveSysPrompt" class="accent">💾 Lưu Style</button>
         </div>
       </div>
     </div>
@@ -830,7 +823,7 @@ Ví dụ:
           </div>
           <div>
             <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Prompt Sinh Storyboard Sketch</label>
-            <textarea id="storyboardPromptInput" rows="5">Professional cinematic storyboard sketch, detailed pencil lines, clear composition, visual guide for the scene action.</textarea>
+            <textarea id="storyboardPromptInput" rows="5"></textarea>
           </div>
           <div style="display:flex; gap:8px;">
             <button id="btnUploadGlobalStoryboard" class="accent">📤 Tải Ảnh Storyboard Lên</button>
@@ -1097,19 +1090,25 @@ Shot 1: ..."></textarea>
       </div>
       <div class="grid-2">
         <div>
-          <label style="font-size:11px; color:var(--muted); display:block;">Render Timeout (giây):</label>
-          <input type="number" id="advRenderTimeout" value="300" style="width:100%;">
+          <label style="font-size:11px; color:var(--muted); display:block;">Render Timeout mỗi cảnh (giây):</label>
+          <input type="number" id="advRenderTimeout" value="1800" min="60" style="width:100%;">
         </div>
         <div>
-          <label style="font-size:11px; color:var(--muted); display:block;">Retry Delay (giây):</label>
-          <input type="number" id="advRetryDelay" value="99" style="width:100%;">
+          <label style="font-size:11px; color:var(--muted); display:block;">Chờ trước khi thử lại (giây):</label>
+          <input type="number" id="advRetryDelay" value="15" min="0" style="width:100%;">
         </div>
       </div>
       <div class="grid-2">
         <div>
-          <label style="font-size:11px; color:var(--muted); display:block;">Số lượt sửa Auto-Heal tối đa:</label>
-          <input type="number" id="advMaxAutoRetries" value="5" min="1" max="10" style="width:100%;">
+          <label style="font-size:11px; color:var(--muted); display:block;">Số lần thử lại khi lỗi tạm thời:</label>
+          <input type="number" id="advMaxRetries" value="2" min="0" max="10" style="width:100%;">
         </div>
+        <div>
+          <label style="font-size:11px; color:var(--muted); display:block;">Nghỉ giữa các cảnh (giây):</label>
+          <input type="number" id="advRenderDelay" value="0" min="0" style="width:100%;">
+        </div>
+      </div>
+      <div class="grid-2">
         <div>
           <label style="font-size:11px; color:var(--muted); display:block;">Độ trễ DNA Scan (giây):</label>
           <input type="number" id="advDnaDelay" value="1.2" step="0.1" style="width:100%;">
@@ -1138,6 +1137,9 @@ const el = (tag, props = {}, ...children) => {
 let activeSlug = "";
 let currentFilm = null;
 let currentState = null;
+// Built by the server from dna.ts / prompts.ts, so the UI shows exactly what gets generated.
+let currentPrompts = { characters: {}, locations: {} };
+let currentDefaults = {};
 let activeUploadTarget = null;
 
 // Tab Switching
@@ -1192,6 +1194,10 @@ async function loadActiveProject() {
   const data = await api("/api/projects/" + activeSlug);
   currentFilm = data.film;
   currentState = data.state || { scenes: {} };
+  currentPrompts = data.referencePrompts || { characters: {}, locations: {} };
+  currentDefaults = data.defaults || {};
+  $("sysPromptInput").placeholder = currentDefaults.style || "";
+  $("storyboardPromptInput").value = currentFilm.storyboardPrompt || currentDefaults.storyboardPrompt || "";
 
   // Sync inputs
   $("cfgModel").value = currentFilm.model || "Veo 3.1 - Quality";
@@ -1204,8 +1210,6 @@ async function loadActiveProject() {
 
   // Toggles
   setToggle("togContinuity", currentFilm.continuity !== false);
-  setToggle("togAutoHeal", currentFilm.isAutoHealEnabled !== false);
-  setToggle("togCelebCheck", !!currentFilm.isCelebrityCheckEnabled);
   setToggle("togStrictActor", !!currentFilm.strictActorMatch);
   setToggle("togStrictLoc", !!currentFilm.strictLocationMatch);
   setToggle("togSkipKeyframe", !!currentFilm.skipImageGen);
@@ -1244,8 +1248,6 @@ async function syncConfig(patch = {}) {
     videoGenMode: $("cfgVideoGenMode").value,
     startFrameSource: $("cfgStartFrameSource").value,
     continuity: isToggleActive("togContinuity"),
-    isAutoHealEnabled: isToggleActive("togAutoHeal"),
-    isCelebrityCheckEnabled: isToggleActive("togCelebCheck"),
     strictActorMatch: isToggleActive("togStrictActor"),
     strictLocationMatch: isToggleActive("togStrictLoc"),
     skipImageGen: isToggleActive("togSkipKeyframe"),
@@ -1261,7 +1263,7 @@ async function syncConfig(patch = {}) {
 ["cfgModel", "cfgImageModel", "cfgRatio", "cfgDuration", "cfgResolution", "cfgVideoGenMode", "cfgStartFrameSource"].forEach(id => {
   $(id).onchange = () => syncConfig();
 });
-["togContinuity", "togAutoHeal", "togCelebCheck", "togStrictActor", "togStrictLoc", "togSkipKeyframe", "togRenderFromShot", "togAutoMerge"].forEach(id => {
+["togContinuity", "togStrictActor", "togStrictLoc", "togSkipKeyframe", "togRenderFromShot", "togAutoMerge"].forEach(id => {
   $(id).onclick = () => {
     $(id).classList.toggle("active");
     syncConfig();
@@ -1503,27 +1505,10 @@ function renderDna(film) {
     );
     const desc = el("div", { style: "font-size:11.5px; color:var(--muted);", textContent: char.description || "Chưa có mô tả ngoại hình." });
     
-    const dnaPrompt = "Phong cách người thật điện ảnh, siêu chân thực. Phông nền xanh chroma key sạch. 5 góc chụp: chính diện toàn thân, 3/4, nghiêng 90 độ, sau lưng, cận cảnh đặc tả. " + char.name + ": " + (char.description || "");
+    const dnaPrompt = currentPrompts.characters[char.name] || "";
     const code = el("div", { className: "dna-code", textContent: dnaPrompt });
 
     const btnRow = el("div", { style: "display:flex; gap:6px; flex-wrap:wrap; margin-top:auto;" });
-    const btnProbe = el("button", { className: "btn-mini pink", textContent: "🛡️ Dò An Toàn Celebrity" });
-    btnProbe.onclick = async () => {
-      try {
-        const res = await api("/api/projects/" + activeSlug + "/dna/character/" + encodeURIComponent(char.name) + "/probe-safety", "POST");
-        alert("✅ " + res.message);
-      } catch (err) { alert(err.message); }
-    };
-
-    const btnMutate = el("button", { className: "btn-mini", textContent: "🧬 Đột Biến Đối Kháng" });
-    btnMutate.onclick = async () => {
-      try {
-        const res = await api("/api/projects/" + activeSlug + "/dna/character/" + encodeURIComponent(char.name) + "/mutate", "POST");
-        alert("Đã cập nhật prompt đột biến đối kháng diện mạo!");
-        await loadActiveProject();
-      } catch (err) { alert(err.message); }
-    };
-
     const btnDelete = el("button", { className: "btn-mini danger", textContent: "🗑️ Xóa" });
     btnDelete.onclick = async () => {
       if (!confirm("Xóa nhân vật " + char.name + "?")) return;
@@ -1533,8 +1518,6 @@ function renderDna(film) {
       } catch (err) { alert(err.message); }
     };
 
-    btnRow.appendChild(btnProbe);
-    btnRow.appendChild(btnMutate);
     btnRow.appendChild(btnDelete);
 
     card.appendChild(header);
@@ -1565,7 +1548,7 @@ function renderLocations(film) {
     );
     const desc = el("div", { style: "font-size:11.5px; color:var(--muted);", textContent: loc.description || "Chưa có mô tả kiến trúc." });
     
-    const locPrompt = "Bối cảnh điện ảnh góc rộng, chiều sâu không gian chân thực, kiến trúc rõ nét, ánh sáng tự nhiên. Không có nhân vật đứng trong ảnh. " + loc.name + ": " + (loc.description || "");
+    const locPrompt = currentPrompts.locations[loc.name] || "";
     const code = el("div", { className: "dna-code", textContent: locPrompt });
 
     const btnRow = el("div", { style: "display:flex; gap:6px; margin-top:auto;" });
@@ -1845,12 +1828,28 @@ $("btnConfirmAddScene").onclick = async () => {
 $("btnSaveSysPrompt").onclick = async () => {
   try {
     await api("/api/projects/" + activeSlug + "/config", "POST", { style: $("sysPromptInput").value });
-    alert("Đã lưu Hollywood DOP System Prompt!");
+    alert("Đã lưu Style Video!");
   } catch (err) { alert(err.message); }
+};
+$("btnResetSysPrompt").onclick = () => {
+  $("sysPromptInput").value = currentDefaults.style || "";
 };
 
 // Advanced Config Modal
 $("btnAdvancedModal").onclick = () => {
+  // Show the project's saved values; saving the modal's defaults would silently overwrite them.
+  if (currentFilm) {
+    const setNum = (id, value) => { if (typeof value === "number") $(id).value = value; };
+    setNum("advRenderTimeout", currentFilm.renderTimeout);
+    setNum("advRetryDelay", currentFilm.retryDelay);
+    setNum("advMaxRetries", currentFilm.maxRetries);
+    setNum("advRenderDelay", currentFilm.renderDelay);
+    setNum("advDnaDelay", currentFilm.dnaDelay);
+    // Empty fields would be saved as "" — show the active prompt (project value or default) instead.
+    $("advCharPrompt").value = currentFilm.directionalPrompt || currentDefaults.directionalPrompt || "";
+    $("advLocPrompt").value = currentFilm.locationDirectionalPrompt || currentDefaults.locationDirectionalPrompt || "";
+    $("advSbPrompt").value = currentFilm.storyboardPrompt || currentDefaults.storyboardPrompt || "";
+  }
   $("modalAdvanced").classList.add("open");
 };
 $("btnCloseAdvanced").onclick = () => $("modalAdvanced").classList.remove("open");
@@ -1863,7 +1862,8 @@ $("btnSaveAdvanced").onclick = async () => {
       storyboardPrompt: $("advSbPrompt").value,
       renderTimeout: Number($("advRenderTimeout").value),
       retryDelay: Number($("advRetryDelay").value),
-      maxAutoRetries: Number($("advMaxAutoRetries").value),
+      maxRetries: Number($("advMaxRetries").value),
+      renderDelay: Number($("advRenderDelay").value),
       dnaDelay: Number($("advDnaDelay").value)
     });
     $("modalAdvanced").classList.remove("open");
@@ -1873,7 +1873,7 @@ $("btnSaveAdvanced").onclick = async () => {
 
 // Render & Stitch
 $("btnRenderAll").onclick = async () => {
-  if (!confirm("Khởi động quy trình Render điện ảnh với I2V Continuity & Auto-Healing?")) return;
+  if (!confirm("Khởi động quy trình Render điện ảnh với I2V Continuity?")) return;
   try {
     await api("/api/projects/" + activeSlug + "/render", "POST");
     await loadActiveProject();
@@ -1943,6 +1943,8 @@ evt.onmessage = (e) => {
 
   terminal.appendChild(div);
   terminal.scrollTop = terminal.scrollHeight;
+};
+
 // Storyboard Interactive Canvas & Slicing
 let currentGlobalSbImg = null;
 let currentGlobalSbBase64 = null;

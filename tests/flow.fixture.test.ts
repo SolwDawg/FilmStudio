@@ -134,16 +134,17 @@ describe("FlowPage fixture", () => {
     try {
       const page = context.pages()[0] ?? (await context.newPage());
       const targetProjectId = "00000000-0000-4000-8000-000000000000";
-      await page.route("https://labs.google/fx/tools/flow", async (route) => {
+      // The engine adds ?hl=en to every Flow URL, so routes allow an optional query string.
+      await page.route(/^https:\/\/labs\.google\/fx\/tools\/flow(\?.*)?$/, async (route) => {
         await route.fulfill({
           contentType: "text/html",
           body: `<a href="/fx/tools/flow/project/${targetProjectId}"><span>Target Project</span></a>`
         });
       });
-      await page.route(`https://labs.google/fx/tools/flow/project/${targetProjectId}`, async (route) => {
+      await page.route(new RegExp(`^https://labs\\.google/fx/tools/flow/project/${targetProjectId}(\\?.*)?$`), async (route) => {
         await route.fulfill({ contentType: "text/html", body: projectFixture("target") });
       });
-      await page.route("https://labs.google/fx/tools/flow/project/wrong", async (route) => {
+      await page.route(/^https:\/\/labs\.google\/fx\/tools\/flow\/project\/wrong(\?.*)?$/, async (route) => {
         await route.fulfill({ contentType: "text/html", body: projectFixture("wrong") });
       });
       await page.goto("https://labs.google/fx/tools/flow/project/wrong");

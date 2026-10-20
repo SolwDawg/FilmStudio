@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { lstat, mkdir, readFile, readlink, rm } from "node:fs/promises";
+import { lstat, mkdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
@@ -18,6 +19,20 @@ export const DEFAULT_ACTION_TIMEOUT_MS = 20000;
 
 function applyPageDefaults(page: Page): void {
   page.setDefaultTimeout(DEFAULT_ACTION_TIMEOUT_MS);
+}
+
+// Running from source (`npm run dev`, the dashboard's render child) goes through tsx/esbuild with
+// keepNames, which wraps named functions as `__name(fn, "name")`. Functions passed to
+// page.evaluate are serialized and run in the page, where that helper does not exist
+// ("ReferenceError: __name is not defined"). A pass-through definition there fixes every
+// evaluate. Kept as a string so the bundler cannot rewrite the shim itself.
+const NAME_HELPER_SHIM = "globalThis.__name = globalThis.__name || ((fn) => fn);";
+
+async function installEvaluateShim(page: Page): Promise<void> {
+  // Future documents (navigations, reloads) in this context...
+  await page.context().addInitScript(NAME_HELPER_SHIM).catch(() => undefined);
+  // ...and the document that is already open.
+  await page.evaluate(NAME_HELPER_SHIM).catch(() => undefined);
 }
 
 export const BROWSER_CHANNELS = ["chrome", "chromium"] as const;
@@ -79,24 +94,86 @@ export async function clearStaleSingletonLock(profileDir: string): Promise<boole
 // window `gflow auth login` opened. We match on the full --user-data-dir value (so the
 // user's normal Chrome, which uses a different dir, is never touched) and skip helper
 // processes (--type=...), which die with their parent.
-export async function findChromeProcessesForProfile(profileDir: string): Promise<number[]> {
-  if (process.platform === "win32") return [];
-  let stdout: string;
+export interface ProcessEntry {
+  pid: number;
+  command: string;
+}
+
+// The root Chrome processes among `entries` whose --user-data-dir is exactly `profileDir`.
+// Windows paths are case-insensitive and the flag may be quoted ("--user-data-dir=C:\a b").
+export function matchProfileProcesses(entries: ProcessEntry[], profileDir: string, platform: NodeJS.Platform = process.platform): number[] {
+  const fold = (value: string): string => (platform === "win32" ? value.toLowerCase() : value);
+  const needle = fold(`--user-data-dir=${profileDir}`);
+  return entries
+    .filter(({ pid, command }) => {
+      const line = fold(command.trim());
+      if (line.includes("--type=") || pid === process.pid) return false;
+      return line.includes(`${needle} `) || line.includes(`${needle}"`) || line.endsWith(needle);
+    })
+    .map(({ pid }) => pid);
+}
+
+async function listChromeProcesses(): Promise<ProcessEntry[]> {
   try {
-    ({ stdout } = await execFileAsync("ps", ["-Ao", "pid=,command="], { maxBuffer: 16 * 1024 * 1024 }));
+    if (process.platform === "win32") {
+      // `ps` does not exist on Windows (and wmic is gone from recent builds); CIM has the full
+      // command line. Before this, Windows always reported "no Chrome on this profile", so a
+      // running automation Chrome was never reused and every relaunch collided with it.
+      const { stdout } = await execFileAsync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+        ],
+        { maxBuffer: 16 * 1024 * 1024, windowsHide: true }
+      );
+      if (!stdout.trim()) return [];
+      const parsed = JSON.parse(stdout) as { ProcessId: number; CommandLine: string | null } | Array<{ ProcessId: number; CommandLine: string | null }>;
+      return (Array.isArray(parsed) ? parsed : [parsed]).map((p) => ({ pid: p.ProcessId, command: p.CommandLine ?? "" }));
+    }
+    const { stdout } = await execFileAsync("ps", ["-Ao", "pid=,command="], { maxBuffer: 16 * 1024 * 1024 });
+    return stdout
+      .split("\n")
+      .map((line) => ({ pid: Number.parseInt(line.trimStart(), 10), command: line.trimStart().replace(/^\d+\s+/, "") }))
+      .filter((entry) => !Number.isNaN(entry.pid));
   } catch {
     return [];
   }
+}
 
-  const needle = `--user-data-dir=${profileDir}`;
-  const pids: number[] = [];
-  for (const line of stdout.split("\n")) {
-    if (!(line.includes(`${needle} `) || line.endsWith(needle))) continue;
-    if (line.includes("--type=")) continue;
-    const pid = Number.parseInt(line.trimStart(), 10);
-    if (!Number.isNaN(pid) && pid !== process.pid) pids.push(pid);
+export async function findChromeProcessesForProfile(profileDir: string): Promise<number[]> {
+  return matchProfileProcesses(await listChromeProcesses(), profileDir);
+}
+
+// Local TCP ports `pid` is listening on (Windows only; elsewhere we rely on the port file).
+async function listeningPorts(pid: number): Promise<number[]> {
+  if (process.platform !== "win32") return [];
+  try {
+    const { stdout } = await execFileAsync("netstat", ["-ano", "-p", "tcp"], { maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+    const ports: number[] = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length >= 5 && cols[3] === "LISTENING" && Number(cols[4]) === pid && cols[1].startsWith("127.0.0.1:")) {
+        ports.push(Number.parseInt(cols[1].slice("127.0.0.1:".length), 10));
+      }
+    }
+    return ports;
+  } catch {
+    return [];
   }
-  return pids;
+}
+
+// A Chrome started with --remote-debugging-port=0 (older gflow) or without a port file: find
+// which of its listening ports is the DevTools endpoint so we can reuse it instead of closing it.
+async function discoverDebugPort(pids: number[]): Promise<number | undefined> {
+  for (const pid of pids) {
+    for (const port of await listeningPorts(pid)) {
+      if (await isDebugEndpoint(port)) return port;
+    }
+  }
+  return undefined;
 }
 
 async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
@@ -113,21 +190,22 @@ async function waitForExit(pid: number, timeoutMs: number): Promise<boolean> {
 // SIGKILL only as a last resort. Returns how many root processes were signalled.
 export async function closeChromeForProfile(profileDir: string): Promise<number> {
   const pids = await findChromeProcessesForProfile(profileDir);
-  for (const pid of pids) {
+  // On Windows process.kill is always a hard TerminateProcess; plain `taskkill` (no /F) asks
+  // Chrome to close its windows instead, so it still flushes cookies like SIGTERM does.
+  const terminate = async (pid: number, force: boolean): Promise<void> => {
     try {
-      process.kill(pid, "SIGTERM");
+      if (process.platform === "win32") {
+        await execFileAsync("taskkill", [...(force ? ["/F"] : []), "/PID", String(pid)], { windowsHide: true });
+      } else {
+        process.kill(pid, force ? "SIGKILL" : "SIGTERM");
+      }
     } catch {
       // Already gone between listing and killing — nothing to do.
     }
-  }
+  };
+  for (const pid of pids) await terminate(pid, false);
   for (const pid of pids) {
-    if (!(await waitForExit(pid, 8000))) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone.
-      }
-    }
+    if (!(await waitForExit(pid, 8000))) await terminate(pid, true);
   }
   return pids.length;
 }
@@ -178,32 +256,56 @@ export function resolveChromeExecutable(runtimePlatform: NodeJS.Platform = proce
   return "google-chrome";
 }
 
-// Chrome with --remote-debugging-port writes the chosen port to DevToolsActivePort in the
-// profile dir (line 1 = port). It removes the file on a clean exit, so its presence plus a
-// live process means a debuggable Chrome we can attach to.
+// Where we record the debugging port we launched Chrome with. Older Chrome versions also wrote
+// DevToolsActivePort (line 1 = port) into the profile dir, but Chrome 155 no longer does, so
+// relying on that file alone made every launch fail after a 30s wait.
+const PORT_FILE = "gflow-debug-port";
+
+// True when a Chrome DevTools endpoint answers on this port.
+async function isDebugEndpoint(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// The port of a debuggable Chrome already running on this profile, if any. A recorded port is
+// only trusted once its endpoint answers, since the file outlives a crashed or killed Chrome.
 async function readDevToolsPort(profileDir: string): Promise<number | undefined> {
-  const candidatePaths = [
-    join(profileDir, "DevToolsActivePort"),
-    join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data", "DevToolsActivePort"),
-  ];
-  for (const p of candidatePaths) {
+  for (const name of [PORT_FILE, "DevToolsActivePort"]) {
     try {
-      const contents = await readFile(p, "utf8");
+      const contents = await readFile(join(profileDir, name), "utf8");
       const port = Number.parseInt(contents.split("\n")[0]?.trim() ?? "", 10);
-      if (!Number.isNaN(port) && port > 0) return port;
-    } catch {}
+      if (!Number.isNaN(port) && port > 0 && (await isDebugEndpoint(port))) return port;
+    } catch {
+      // Missing file; try the next one.
+    }
   }
   return undefined;
 }
 
-async function waitForDevToolsPort(profileDir: string, timeoutMs: number): Promise<number | undefined> {
+// Ask the OS for a free local port to hand to Chrome, so we know it without reading it back.
+function findFreePort(): Promise<number> {
+  return new Promise((resolvePort, rejectPort) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", rejectPort);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+async function waitForDebugEndpoint(port: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const port = await readDevToolsPort(profileDir);
-    if (port) return port;
-    await delay(150);
+    if (await isDebugEndpoint(port)) return true;
+    await delay(250);
   }
-  return undefined;
+  return false;
 }
 
 export interface ChromeLaunch {
@@ -255,13 +357,12 @@ export async function launchDebuggableChrome(profile: string, headed: boolean): 
   const profileDir = resolveProfileDir(profile);
   await mkdir(profileDir, { recursive: true });
   await rm(join(profileDir, "DevToolsActivePort"), { force: true });
-  if (process.env.LOCALAPPDATA) {
-    await rm(join(process.env.LOCALAPPDATA, "Google", "Chrome", "User Data", "DevToolsActivePort"), { force: true }).catch(() => undefined);
-  }
+  const port = await findFreePort();
+  await writeFile(join(profileDir, PORT_FILE), `${port}\n`, "utf8");
 
   const args = [
     `--user-data-dir=${profileDir}`,
-    "--remote-debugging-port=0",
+    `--remote-debugging-port=${port}`,
     "--remote-allow-origins=*",
     "--no-first-run",
     "--no-default-browser-check",
@@ -284,8 +385,8 @@ export async function launchDebuggableChrome(profile: string, headed: boolean): 
   const child = spawn(resolveChromeExecutable(), args, { detached: true, stdio: "ignore" });
   child.unref();
 
-  const port = await waitForDevToolsPort(profileDir, 30000);
-  if (port === undefined) {
+  if (!(await waitForDebugEndpoint(port, 30000))) {
+    await rm(join(profileDir, PORT_FILE), { force: true });
     throw new Error(
       [
         "Could not start Google Chrome with a debugging port.",
@@ -309,6 +410,7 @@ export async function launchLoginChrome(profile: string): Promise<string> {
   // Clear any stale debug-port marker from a previous automation session so the next
   // automation command knows this plain window has no debugging port.
   await rm(join(profileDir, "DevToolsActivePort"), { force: true });
+  await rm(join(profileDir, PORT_FILE), { force: true });
 
   const args = [`--user-data-dir=${profileDir}`, "--no-first-run", "--no-default-browser-check", FLOW_URL];
   const child = spawn(resolveChromeExecutable(), args, { detached: true, stdio: "ignore" });
@@ -330,6 +432,7 @@ async function openChromiumSession(options: BrowserSessionOptions, profileDir: s
     });
   const page = context.pages()[0] ?? (await context.newPage());
   applyPageDefaults(page);
+  await installEvaluateShim(page);
   return {
     context,
     page,
@@ -346,7 +449,13 @@ export async function openBrowserSession(options: BrowserSessionOptions): Promis
 
   const connect = (port: number): Promise<Browser> => chromium.connectOverCDP(`http://127.0.0.1:${port}`);
   const running = await findChromeProcessesForProfile(profileDir);
-  const existingPort = running.length > 0 ? await readDevToolsPort(profileDir) : undefined;
+  // readDevToolsPort only returns a port whose endpoint answers, so it is safe to try even when
+  // the process listing came back empty.
+  let existingPort = await readDevToolsPort(profileDir);
+  if (existingPort === undefined && running.length > 0) {
+    existingPort = await discoverDebugPort(running);
+    if (existingPort !== undefined) await writeFile(join(profileDir, PORT_FILE), `${existingPort}\n`, "utf8");
+  }
 
   let browser: Browser | undefined;
 
@@ -381,6 +490,7 @@ export async function openBrowserSession(options: BrowserSessionOptions): Promis
   const context = browser.contexts()[0] ?? (await browser.newContext());
   const page = pickFlowPage(context) ?? context.pages()[0] ?? (await context.newPage());
   applyPageDefaults(page);
+  await installEvaluateShim(page);
   await applyWindowVisibility(page, options.headed);
 
   return {

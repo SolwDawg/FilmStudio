@@ -47,6 +47,19 @@ film status mua-thu-seoul
 film stitch mua-thu-seoul          # -> projects/mua-thu-seoul/final.mp4
 ```
 
+### Render: thử lại, tạm dừng, cấu hình
+
+- Lỗi tạm thời (Flow báo generation failed, UI/timeout, tải video lỗi) được thử lại tối đa `maxRetries` lần (mặc định 2), cách nhau `retryDelay` giây. Bị rate limit thì chờ lâu hơn (ít nhất 60 giây, tăng dần).
+- Cảnh bị Flow **chặn vì chính sách** không được render lại: prompt giữ nguyên thì sẽ lại bị chặn, mà lần nào cũng tốn credit. Hãy sửa prompt cảnh đó rồi chạy `film render` lại.
+- Hết credit, phải đăng nhập lại hoặc cần thao tác tay thì dừng ngay.
+- `--continue-on-error`: khi một cảnh lỗi, bỏ qua các cảnh nối liền với nó và render tiếp từ cảnh `[CUT]` kế tiếp. Cuối lượt có tổng kết, và lệnh trả mã lỗi nếu có cảnh hỏng.
+- `film.json` được đọc lại trước mỗi cảnh, nên sửa prompt, Pause/Resume hay đổi cấu hình trên dashboard đều có tác dụng với các cảnh chưa render. Các trường dùng được: `renderTimeout` (giây/cảnh), `retryDelay` (giây), `maxRetries`, `renderDelay` (giây nghỉ giữa các cảnh), `isPaused`.
+- Ctrl+C hoặc nút Dừng Khẩn Cấp đưa cảnh đang chạy về `pending` để lần sau render lại.
+- **Project trên Flow**: lần render đầu tạo một project Flow mới và lưu id của nó vào `film.json` (`flowProjectId`); các lần render sau quay lại đúng project đó. Muốn dùng project có sẵn thì đặt `flowProject` (tên project) hoặc `flowProjectId`; xoá `flowProjectId` để bắt đầu project mới.
+- Engine luôn mở Flow bằng giao diện tiếng Anh (`hl=en`), nên tài khoản Google dùng ngôn ngữ nào cũng chạy được.
+- Lần đầu tải frame lên, Flow có thể hỏi "Rights to use this image": engine dừng chờ bạn trả lời trong cửa sổ Chrome (tối đa 5 phút), không tự đồng ý.
+- `film stitch --only-rendered` ghép bản xem trước từ các cảnh đã render.
+
 ### Kịch bản
 
 - Mỗi cảnh bắt đầu bằng `SCENE 1:` / `CẢNH 1:` / `PHÂN CẢNH 1:`; nội dung có thể nằm cùng dòng hoặc dòng dưới.
@@ -61,7 +74,7 @@ film stitch mua-thu-seoul          # -> projects/mua-thu-seoul/final.mp4
 | `film list` / `film status <p>` | Danh sách dự án / trạng thái từng cảnh |
 | `film import <p> <script>` | Thay danh sách cảnh bằng kịch bản mới (xoá tiến độ cũ) |
 | `film character add <p> <name>` | `--description`, `--alias`, `--image`, `--flow-name` (tên character đã lưu trong Flow, truyền vào `--character`) |
-| `film render <p>` | `--scene <id>` (lặp được), `--force`, `--no-continuity`, `--no-headed`, `--profile`, `--browser` |
+| `film render <p>` | `--scene <id>` (lặp được), `--force`, `--no-continuity`, `--continue-on-error`, `--max-retries <n>`, `--no-headed`, `--profile`, `--browser` |
 | `film plan <p> [-o f.yaml]` | Xuất pipeline cho `gflow batch` (không có nối frame) |
 | `film stitch <p> [-o f.mp4]` | Ghép bằng ffmpeg: copy luồng, tự encode lại nếu clip khác codec/kích thước |
 | `film dashboard [--port 3333]` | Web UI Hollywood Suite tại `http://127.0.0.1:3333`: 7 Tabs toàn trình, 1-Click Full Auto, 360° DNA Bible, Storyboard Crop Grid, Auto-Loop Engine, Master Cinema Export, Live SSE Logs. |
@@ -72,8 +85,7 @@ Thư mục dự án chứa `film.json` (cấu hình + cảnh + nhân vật + b�
 - **7 Phân Hệ Tabs**:
   1. 🎬 **Timeline (Bàn Dựng Phân Cảnh)**: Multi-Slot Frames (`Story`, `Shot`, `First`, `Last`), chỉnh sửa prompt trực tiếp, nút `Render Cảnh Này`, `[CUT] / [NỐI]`, `Auto-Heal`, `Viết Take Mới`, `Xóa Cảnh`.
   2. 📜 **Kịch Bản & Phân Rã**: Sliding window 150-200 từ, trích xuất cấu trúc chuẩn SCENE 10s Hollywood, DOP Live-Action Prompt editor.
-  3. 🧬 **Thư Viện DNA (360° Bible)**: Hồ sơ Diễn viên (Chroma Key 5 góc, Voice Casting) và Bối cảnh Kiến trúc (Location Sheets). Nút dò an toàn Celebrity qua Omni Flash 4s 360p & Đột biến đối kháng diện mạo.
-  4. 🖼️ **Storyboard & Grid Crop**: Cắt ảnh lưới 2x2 hoặc 3x3 thành các Shot riêng biệt qua FFmpeg native.
+  3. 🧬 **Thư Viện DNA (360° Bible)**: Hồ sơ Diễn viên (Chroma Key 5 góc, Voice Casting) và Bối cảnh Kiến trúc (Location Sheets).  4. 🖼️ **Storyboard & Grid Crop**: Cắt ảnh lưới 2x2 hoặc 3x3 thành các Shot riêng biệt qua FFmpeg native.
   5. 🔄 **Auto-Loop Engine**: Tự động viết lại kịch bản theo phiên bản mới (Takes) và render lặp vô tận.
   6. 🏆 **Phim Master**: Bình thường hóa luồng (30fps, 30000 timescale, yuv420p, libx264, aac) & Lossless GPU Concat.
   7. 📟 **Nhật Ký (Live Terminal)**: Stream SSE thời gian thực có bộ lọc `Done`, `Fail`, `Heal`, `Render`.
@@ -98,7 +110,7 @@ npm run gflow -- doctor               # chạy `gflow` từ source
 npm test && npm run lint
 ```
 
-Ghi chú: 10 test của engine (đường dẫn Windows, URL `flow.google.com` so với `labs.google/fx/...`, fixture trang cũ) đang fail y hệt trong `C:\learning\gflow-cli` — đó là test cũ chưa theo kịp các thay đổi chưa commit ở engine, không phải do việc gộp. 10 test của `studio` đều pass.
+Các test fixture của engine cần trình duyệt của Playwright: chạy `npx playwright install chromium` một lần trước `npm test`.
 
 ## Giấy phép
 
