@@ -1,10 +1,14 @@
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { dirname, extname, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Fields, ProjectPaths } from "../domain/index.js";
 
 const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
   ".mp4": "video/mp4",
   ".webm": "video/webm",
   ".mov": "video/quicktime",
@@ -67,4 +71,19 @@ export function serveMedia(req: IncomingMessage, res: ServerResponse, paths: Pro
     res.writeHead(200, { "content-type": type, "content-length": size, "accept-ranges": "bytes" });
     createReadStream(file).pipe(res);
   }
+}
+
+// The dashboard page (public/index.html, app.js, styles.css). Read on every request, so editing
+// the files shows up on reload; the build copies public/ next to the compiled server.
+const PUBLIC_DIR = fileURLToPath(new URL("./public/", import.meta.url));
+const PUBLIC_FILES = new Set(["index.html", "app.js", "styles.css"]);
+
+// Serves /, /app.js and /styles.css; returns false for any other path.
+export function serveDashboardFile(res: ServerResponse, pathname: string): boolean {
+  const name = pathname === "/" ? "index.html" : basename(pathname);
+  if (pathname !== "/" && pathname !== `/${name}`) return false;
+  if (!PUBLIC_FILES.has(name)) return false;
+  res.writeHead(200, { "content-type": MIME[extname(name)], "cache-control": "no-cache" });
+  createReadStream(join(PUBLIC_DIR, name)).pipe(res);
+  return true;
 }

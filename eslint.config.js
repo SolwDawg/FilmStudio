@@ -45,6 +45,17 @@ export default tseslint.config(
     files: ["src/**/*.ts"],
     rules: { "no-restricted-imports": ["error", { patterns: [deepImport] }] }
   },
+  {
+    // The dashboard's browser script: plain JS loaded by public/index.html.
+    files: ["src/studio/dashboard/public/**/*.js"],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      sourceType: "script",
+      globals: Object.fromEntries(
+        ["window", "document", "fetch", "EventSource", "FileReader", "FormData", "Blob", "URL", "alert", "confirm", "prompt", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "console", "location", "localStorage", "navigator", "HTMLElement", "Event", "Node", "Image"].map((name) => [name, "readonly"])
+      )
+    }
+  },
   layer(["src/core/**/*.ts"], ["browser", "flow", "gflow", "studio"]),
   layer(["src/browser/**/*.ts"], ["flow", "gflow", "studio"]),
   layer(["src/flow/**/*.ts"], ["browser", "gflow", "studio"]),

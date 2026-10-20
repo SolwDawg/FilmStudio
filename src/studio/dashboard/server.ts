@@ -42,8 +42,7 @@ import {
 } from "../domain/index.js";
 import { cropStoryboardGrid } from "../media/index.js";
 import { stitchFilm } from "../render/index.js";
-import { DASHBOARD_HTML } from "./html.js";
-import { readBody, sendJson as json, serveMedia, writeDataUrl } from "./http.js";
+import { readBody, sendJson as json, serveDashboardFile, serveMedia, writeDataUrl } from "./http.js";
 import { RenderProcesses } from "./render-process.js";
 
 export interface Dashboard {
@@ -83,10 +82,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
     const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
     const parts = url.pathname.split("/").filter(Boolean);
 
-    if (req.method === "GET" && url.pathname === "/") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(DASHBOARD_HTML);
-      return;
-    }
+    if (req.method === "GET" && serveDashboardFile(res, url.pathname)) return;
 
     // Live log (server-sent events): replays the recent lines, then streams new ones.
     if (req.method === "GET" && url.pathname === "/api/logs") {

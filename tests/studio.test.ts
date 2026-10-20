@@ -9,7 +9,6 @@ import { planBatch, renderFilm } from "../src/studio/render/pipeline.js";
 import { createProject, loadFilm, loadState, saveFilm, slugify } from "../src/studio/domain/project.js";
 import { buildScenePrompt, parseScript, scenesFromScript, videoShotText } from "../src/studio/domain/script.js";
 import { startDashboard } from "../src/studio/dashboard/server.js";
-import { DASHBOARD_HTML } from "../src/studio/dashboard/html.js";
 import { GENRES } from "../src/studio/domain/genres.js";
 import { buildStoryChunkPrompt } from "../src/studio/domain/breakdown.js";
 import { DURATION_PLACEHOLDER } from "../src/studio/domain/prompts.js";
@@ -418,11 +417,14 @@ Shot: (Wide shot) Misty bamboo forest. Lăng Phong waits. Lăng Phong: "Ai đó?
     expect(videoShotText("(Wide shot) Rain. Location: unknown.")).toBe("(Wide shot) Rain. Location: unknown.");
   });
 
-  it("ships dashboard JavaScript that parses", () => {
+  it("ships dashboard JavaScript that parses and an HTML page that loads it", async () => {
     // A single missing brace once made the browser drop the whole script, so no button worked.
-    const scripts = [...DASHBOARD_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
-    expect(scripts.length).toBeGreaterThan(0);
-    for (const source of scripts) expect(() => new Script(source)).not.toThrow();
+    const source = await readFile("src/studio/dashboard/public/app.js", "utf8");
+    expect(() => new Script(source)).not.toThrow();
+    const html = await readFile("src/studio/dashboard/public/index.html", "utf8");
+    expect(html).toContain('<script src="/app.js"></script>');
+    expect(html).toContain('<link rel="stylesheet" href="/styles.css">');
+    expect(html).not.toMatch(/<script>/);
   });
 
   it("serves the dashboard only to its own origin and confines media to renders/", async () => {

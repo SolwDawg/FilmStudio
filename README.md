@@ -71,7 +71,7 @@ film stitch mua-thu-seoul          # -> projects/mua-thu-seoul/final.mp4
 
 ### Thể loại (genre preset)
 
-Mỗi dự án bắt đầu từ một preset thể loại (`src/studio/genres.ts`). Preset gồm: style video chèn vào mọi cảnh, prompt phân rã truyện (`storyPrompt`), prompt ảnh tham chiếu nhân vật và bối cảnh, và quy tắc ảnh. Các giá trị này được ghi vào `film.json` lúc tạo dự án, sau đó sửa tự do trên dashboard hoặc trong file.
+Mỗi dự án bắt đầu từ một preset thể loại (`src/studio/domain/genres.ts`). Preset gồm: style video chèn vào mọi cảnh, prompt phân rã truyện (`storyPrompt`), prompt ảnh tham chiếu nhân vật và bối cảnh, và quy tắc ảnh. Các giá trị này được ghi vào `film.json` lúc tạo dự án, sau đó sửa tự do trên dashboard hoặc trong file.
 
 - `drama`: phim người thật hiện đại, nhịp chậm, cảm xúc. Ví dụ: `examples/kdrama-autumn.md`.
 - `wuxia`: kiếm hiệp cổ trang. Hán phục, võ thuật có trọng lượng thật; mỗi scene một nhịp động tác theo một hướng, scene giao đấu không có thoại, bay nhảy dùng cảnh rộng, không rút kiếm giữa trận, hiệu ứng (nước, lá) phải có nguyên nhân vật lý; thoại cổ phong; không máu me. Ví dụ: `examples/kiem-hiep-truc-lam.md`.
@@ -118,13 +118,23 @@ Thư mục dự án chứa `film.json` (cấu hình + cảnh + nhân vật + b�
 
 ## Cấu trúc
 
+Mã nguồn chia thành các module; mỗi module có một `index.ts` mô tả nó làm gì và được phép phụ thuộc vào module nào. Các module khác chỉ import qua `index.js` đó. ESLint (`no-restricted-imports`) chặn mọi import đi tắt hoặc ngược tầng.
+
 ```
-src/            engine gflow-cli (browser/, flow/, jobs/, cli.ts)
-src/studio/     lớp làm phim (project, script, pipeline, ffmpeg, cli, server, dashboard)
-tests/          test của engine + studio.test.ts
-examples/       pipeline.yaml, kdrama-autumn.md
-archive/        tài liệu & script từ thư mục Film cũ (không dùng trong dự án mới)
+src/core/               hợp đồng dùng chung: lỗi, schema job, interface FlowAutomation, URL Flow, đường dẫn, version
+src/browser/            phiên Playwright, profile Chrome                         -> core
+src/flow/               tự động hoá Google Flow (FlowPage, CharacterPage, ...)   -> core
+src/gflow/              lệnh `gflow` và batch runner                             -> core, browser, flow
+src/studio/domain/      dự án phim, kịch bản, thể loại, prompt, thao tác sửa phim -> core
+src/studio/media/       ffmpeg: trích frame, ghép phim, cắt storyboard           (độc lập)
+src/studio/render/      pipeline render, chỉ dùng FlowAutomation                 -> core, domain, media
+src/studio/dashboard/   API HTTP + giao diện (public/index.html, app.js, styles.css) -> core, domain, media, render
+src/studio/cli.ts       lệnh `film`, nối các module lại với nhau
+tests/                  test unit, fixture Playwright và test dashboard trên trình duyệt
+examples/               pipeline.yaml, kdrama-autumn.md, kiem-hiep-truc-lam.md
 ```
+
+Flow đổi giao diện thì chỉ sửa `src/flow/`. Thêm thể loại hay prompt mới thì chỉ sửa `src/studio/domain/`.
 
 ## Phát triển
 
