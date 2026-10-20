@@ -132,3 +132,40 @@ export function mergeDiscoveredActors(existing: FilmCharacter[], discovered: Dis
 
   return Array.from(map.values());
 }
+
+const CAST_LINE = /(?:Nhân vật|Characters?|Diễn viên)\s*[:–-]\s*([^\n]+)/i;
+const LOCATION_LINE = /(?:Bối cảnh|Location|Địa điểm)\s*[:–-]\s*([^\n]+)/i;
+
+/**
+ * Finds the actors and locations named on the "Nhân vật:" / "Bối cảnh:" lines of each scene,
+ * each with the reference-sheet prompt the project would use for it.
+ */
+export function discoverCast(film: { scenes: FilmScene[]; directionalPrompt?: string; locationDirectionalPrompt?: string }): DnaScanResult {
+  const actors: DiscoveredActor[] = [];
+  const locations: DiscoveredLocation[] = [];
+  const known = (list: Array<{ name: string }>, name: string): boolean => list.some((entry) => entry.name.toLowerCase() === name.toLowerCase());
+
+  for (const { current } of createSlidingSceneWindows(film.scenes)) {
+    const names = current.prompt.match(CAST_LINE)?.[1]?.split(/[,;&]/).map((name) => name.trim()).filter(Boolean) ?? [];
+    for (const name of names) {
+      if (known(actors, name)) continue;
+      actors.push({
+        name,
+        aliases: [],
+        roles: ["Diễn viên chính"],
+        traits: "Ngoại hình điện ảnh, phong thái tự nhiên",
+        referencePrompt: buildActorDnaImagePrompt({ name, traits: "Ngoại hình điện ảnh" }, film.directionalPrompt)
+      });
+    }
+    const location = current.prompt.match(LOCATION_LINE)?.[1]?.trim();
+    if (location && !known(locations, location)) {
+      locations.push({
+        name: location,
+        aliases: [],
+        traits: "Góc rộng điện ảnh, bố cục chiều sâu, ánh sáng tự nhiên",
+        referencePrompt: buildLocationDnaImagePrompt({ name: location, traits: "Góc rộng điện ảnh" }, film.locationDirectionalPrompt)
+      });
+    }
+  }
+  return { actors, locations };
+}

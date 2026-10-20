@@ -7,3 +7,4 @@ export * from "./healing.js";
 export * from "./project.js";
 export * from "./prompts.js";
 export * from "./script.js";
+export * from "./film-edits.js";

@@ -1,4 +1,5 @@
 import { DEFAULT_STORY_PROMPT, DURATION_PLACEHOLDER } from "./prompts.js";
+import type { FilmScene } from "./project.js";
 
 export interface ShotDetail {
   number: number;
@@ -156,4 +157,32 @@ function extractShotsFromBlock(text: string): ShotDetail[] {
   }
 
   return shots;
+}
+
+// Scenes for a story pasted into the dashboard: a structured script ("SCENE n:" blocks) keeps its
+// scenes, with cast and [CUT] markers; plain prose becomes one scene per ~wordsPerChunk words.
+export function scenesFromStory(storyText: string, wordsPerChunk = 150): FilmScene[] {
+  const parsed = parseStructuredScript(storyText);
+  if (parsed.length > 0) {
+    return parsed.map((scene) => ({
+      id: scene.id,
+      title: `Scene ${scene.sceneNumber}`,
+      prompt: scene.rawText,
+      characters: scene.characters,
+      cut: scene.cut,
+      shotImages: [],
+      connectShot: false
+    }));
+  }
+  const chunks = chunkStory(storyText, wordsPerChunk);
+  const width = Math.max(2, String(chunks.length).length);
+  return chunks.map((chunk, index) => ({
+    id: `scene-${String(index + 1).padStart(width, "0")}`,
+    title: `Scene ${index + 1}`,
+    prompt: chunk,
+    characters: [],
+    cut: false,
+    shotImages: [],
+    connectShot: false
+  }));
 }
