@@ -1,14 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserContext, Page } from "playwright";
-import { GenerationBlockedError, GenerationFailedError } from "../errors.js";
+import { GenerationBlockedError, GenerationFailedError, UiContractError } from "../errors.js";
 import type { CharacterAutomation, CharacterResult, CharacterSummary, CreateCharacterInput } from "./types.js";
-import { addFromProject, navigateToProject, pickModel, projectSubUrl, uploadMedia } from "./ui.js";
+import { confirmPicker, navigateToProject, pickModel, projectSubUrl, waitForUploadConsent } from "./ui.js";
 import { flowLocators } from "./locators.js";
 
 const PRESET_LABEL: Record<NonNullable<CreateCharacterInput["preset"]>, RegExp> = {
   familiar: /The Familiar/i,
   eccentric: /The Eccentric/i,
+  professional: /The Professional/i,
+  wildcard: /The Wildcard/i,
   wicked: /The Wicked/i,
   fantastical: /The Fantastical/i
 };
@@ -16,26 +18,31 @@ const PRESET_LABEL: Record<NonNullable<CreateCharacterInput["preset"]>, RegExp> 
 export class CharacterPage implements CharacterAutomation {
   constructor(private readonly page: Page) {}
 
+  // Live-verified (Oct 2026): the "New character" page lives at /project/<id>/character. Its
+  // "Upload" button opens the file chooser directly; "Add from project" opens the shared
+  // <flow-add-menu-popover-content> picker confirmed with "Add media"; "Start generation" creates.
   async createCharacter(input: CreateCharacterInput): Promise<CharacterResult> {
     const projectId = await navigateToProject(this.page, input.project);
-    await this.page.goto(projectSubUrl(projectId, "characters"), { waitUntil: "domcontentloaded" });
+    await this.page.goto(projectSubUrl(projectId, "character"), { waitUntil: "domcontentloaded" });
     const locators = flowLocators(this.page);
-    await locators.characterPrompt.first().waitFor({ state: "visible", timeout: 20000 });
+    await locators.characterPrompt.first().waitFor({ state: "visible", timeout: 20000 }).catch(() => {
+      throw new UiContractError("the New character page did not open");
+    });
 
     if (input.preset) {
-      await this.page.getByText(PRESET_LABEL[input.preset]).first().click().catch(() => undefined);
+      await this.page.getByText(PRESET_LABEL[input.preset]).first().click();
       await this.page.waitForTimeout(300);
     }
     if (input.model) await pickModel(this.page, input.model);
 
-    for (const file of input.images) await uploadMedia(this.page, /^upload/i, file);
-    for (const ref of input.fromProject) await addFromProject(this.page, /add from project/i, ref);
+    for (const file of input.images) await this.uploadImage(file);
+    for (const ref of input.fromProject) await this.addFromProject(ref);
 
     const box = locators.characterPrompt.first();
     await box.click();
     await box.press("ControlOrMeta+a").catch(() => undefined);
     await box.press("Backspace").catch(() => undefined);
-    await box.pressSequentially(input.prompt, { delay: 8 });
+    await this.page.keyboard.insertText(input.prompt);
 
     await this.assertNotBlocked();
     const before = new Set(await this.characterThumbs());
@@ -52,52 +59,56 @@ export class CharacterPage implements CharacterAutomation {
     return { name: input.name, thumbnailPath, flowUrl: this.page.url() };
   }
 
+  private async uploadImage(filePath: string): Promise<void> {
+    const upload = this.page.getByRole("button").filter({ hasText: /^\s*upload\s*Upload\s*$/ }).first();
+    const [chooser] = await Promise.all([this.page.waitForEvent("filechooser", { timeout: 15000 }), upload.click()]);
+    await chooser.setFiles(filePath);
+    await waitForUploadConsent(this.page);
+  }
+
+  private async addFromProject(name: string): Promise<void> {
+    await this.page.getByRole("button").filter({ hasText: /add from project/i }).first().click();
+    const picker = this.page.locator("flow-add-menu-popover-content, [role=dialog]").filter({ visible: true }).first();
+    await picker.waitFor({ state: "visible", timeout: 10000 });
+    const option = picker.getByRole("option").filter({ hasText: name }).first();
+    await option.waitFor({ state: "visible", timeout: 15000 }).catch(() => {
+      throw new UiContractError(`"${name}" is not among this project's media`);
+    });
+    if ((await option.getAttribute("aria-selected")) !== "true") await option.click();
+    await confirmPicker(this.page, picker);
+  }
+
+  // Live-verified (Oct 2026): the project's "Characters" filter shows one <flow-character-tile> per
+  // character (name in .character-tile-name); with no characters it opens the New character page.
   async listCharacters(project?: string): Promise<CharacterSummary[]> {
     const projectId = await navigateToProject(this.page, project);
     await this.page.goto(projectSubUrl(projectId, ""), { waitUntil: "domcontentloaded" });
-    await this.page.waitForTimeout(800);
-    await this.page.locator("button").filter({ hasText: /Characters/i }).first().click().catch(() => undefined);
-    await this.page.waitForTimeout(800);
+    const filter = this.page.locator("button").filter({ hasText: /^\s*(accessibility_new\s*)?Characters\s*$/ }).first();
+    await filter.waitFor({ state: "visible", timeout: 20000 });
+    await filter.click();
+    await this.page
+      .locator("flow-character-tile, [role=textbox]")
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 })
+      .catch(() => undefined);
     return this.page.evaluate(() => {
       const results: Array<{ name: string; thumbnailUrl?: string }> = [];
-      const seen = new Set<string>();
-
-      for (const link of [...document.querySelectorAll('a[href*="/character/"]')]) {
-        const img = link.querySelector("img") as HTMLImageElement | null;
-        const thumbnailUrl = img?.currentSrc || img?.src || undefined;
-        const alt = img?.alt?.trim();
-        const cardText = (
-          link.closest("[role=button],article,figure,li,div")?.textContent ||
-          link.textContent ||
-          ""
-        )
-          .replace(/accessibility_new/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
-        const name = alt && !/generated image|user profile image/i.test(alt) ? alt : cardText;
-        if (!name || seen.has(name)) continue;
-        seen.add(name);
-        results.push(thumbnailUrl !== undefined && thumbnailUrl !== "" ? { name, thumbnailUrl } : { name });
-      }
-
-      if (results.length > 0) return results;
-
-      const tiles = [...document.querySelectorAll("[data-character-id],[role=listitem],figure")];
-      for (const t of tiles) {
-        const name = (t.querySelector("figcaption,[class*=name],h3,h4")?.textContent || "").trim();
+      for (const tile of [...document.querySelectorAll("flow-character-tile")]) {
+        const name = (tile.querySelector(".character-tile-name")?.textContent || "").trim();
         if (!name) continue;
-        const img = t.querySelector("img") as HTMLImageElement | null;
+        const img = tile.querySelector("img") as HTMLImageElement | null;
         const thumbnailUrl = img?.currentSrc || img?.src || undefined;
-        results.push(thumbnailUrl !== undefined && thumbnailUrl !== "" ? { name, thumbnailUrl } : { name });
+        results.push(thumbnailUrl ? { name, thumbnailUrl } : { name });
       }
       return results;
     });
   }
 
   private async configureCharacter(input: CreateCharacterInput): Promise<void> {
-    // After generation, the character detail page shows: an <input placeholder="Character Name">,
-    // "Select a voice" button, description <textarea>, and a "Done" button.
-    const nameInput = this.page.locator('input[placeholder="Character Name"]').first();
+    // Live-verified (Oct 2026): the character page (/project/<id>/character/<uuid>) opens as soon
+    // as generation starts, with an <input placeholder="Character name">, "Select a voice", the
+    // "Character info" <textarea> and a "Done" button that saves and returns to the project.
+    const nameInput = this.page.locator('input[placeholder="Character name" i]').first();
     await nameInput.waitFor({ state: "visible", timeout: 30000 }).catch(() => undefined);
     await this.page.waitForTimeout(500);
 
@@ -105,7 +116,8 @@ export class CharacterPage implements CharacterAutomation {
     if (await nameInput.count()) {
       await nameInput.click();
       await nameInput.fill(input.name);
-      await this.page.waitForTimeout(200);
+      await nameInput.press("Enter");
+      await this.page.waitForTimeout(300);
     }
 
     // Select a voice if specified. The voice picker shows [role=option] items
@@ -139,13 +151,15 @@ export class CharacterPage implements CharacterAutomation {
     const doneBtn = this.page.locator("button").filter({ hasText: /^Done$/i }).first();
     if (await doneBtn.count()) {
       await doneBtn.click();
-      await this.page.waitForTimeout(500);
+      await this.page.waitForURL((url) => !/\/character\//.test(url.pathname), { timeout: 15000 }).catch(() => undefined);
     }
   }
 
+  // The finished portrait is an <img alt="Generated character image">; while generating, the page
+  // shows a blurred placeholder and a percentage instead.
   private async characterThumbs(): Promise<string[]> {
-    return this.page.$$eval("img", (imgs) =>
-      imgs.map((i) => (i as HTMLImageElement).currentSrc || (i as HTMLImageElement).src).filter((s) => /getMediaUrlRedirect/.test(s))
+    return this.page.$$eval('img[alt="Generated character image"], img[src*="getMediaUrlRedirect"]', (imgs) =>
+      imgs.map((i) => (i as HTMLImageElement).currentSrc || (i as HTMLImageElement).src).filter(Boolean)
     );
   }
 

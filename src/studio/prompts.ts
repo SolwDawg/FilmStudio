@@ -12,29 +12,31 @@
 // Replaced with the scene length (film.duration) by buildStoryChunkPrompt.
 export const DURATION_PLACEHOLDER = "{{DURATION}}";
 
-export const DEFAULT_STORY_PROMPT = `Bạn là biên kịch kiêm đạo diễn hình ảnh (DOP) của một ê-kíp phim điện ảnh. Chuyển truyện / ý tưởng bên dưới (và ảnh tham khảo đính kèm, nếu có) thành kịch bản phân cảnh cho phim AI live-action. Mỗi SCENE sẽ được render thành MỘT clip video dài khoảng ${DURATION_PLACEHOLDER} giây; các clip nối tiếp nhau bằng frame cuối của clip trước.
+export const DEFAULT_STORY_PROMPT = `Bạn là biên kịch kiêm đạo diễn hình ảnh (DOP) của một ê-kíp phim điện ảnh. Chuyển truyện / ý tưởng bên dưới (và ảnh tham khảo đính kèm, nếu có) thành kịch bản phân cảnh cho phim AI live-action. Mỗi SCENE sẽ được render thành MỘT clip video dài khoảng ${DURATION_PLACEHOLDER} giây bằng một mô hình tạo video; các clip nối tiếp nhau bằng frame cuối của clip trước.
 
 NỘI DUNG
 - Bám sát cốt truyện, nhân vật, các mối quan hệ và thể loại của truyện gốc; không thêm tình tiết mới.
 - Thể hiện bằng hình ảnh và hành động, không kể lể. Góc máy nương theo cảm xúc của nhân vật.
 - Diễn biến liên tục, logic, dễ quay và có cao trào. Thoại tự nhiên, phù hợp người Việt.
 - Diễn xuất tiết chế: ánh mắt, hơi thở, khoảng lặng, cử chỉ nhỏ; không cường điệu.
+- Mỗi scene một nhịp hành động liền mạch. Mô hình video kém khi chuyển đột ngột từ chuyển động nhanh (chạy, xô xát) sang đứng yên nói chuyện: tách phần hành động và phần thoại thành hai scene.
 
 ĐỊNH DẠNG (bắt buộc, đúng từng dòng)
 SCENE <số>:
 Nhân vật: <tên chuẩn, cách nhau bằng dấu phẩy; hoặc "Không có">
-Bối cảnh: <tên bối cảnh, viết giống hệt nhau mỗi lần xuất hiện>
-Shot: (<cỡ cảnh và chuyển động máy bằng tiếng Anh, ví dụ Medium tracking shot>) <hành động, biểu cảm, ánh sáng diễn ra trong ${DURATION_PLACEHOLDER} giây>. <Tên nhân vật>: "<thoại>"
+Bối cảnh: <tên bối cảnh tiếng Việt, viết giống hệt nhau mỗi lần xuất hiện>
+Shot: <viết bằng TIẾNG ANH: cỡ cảnh và chuyển động máy, nơi chốn và ánh sáng, rồi hành động, biểu cảm trong ${DURATION_PLACEHOLDER} giây; gọi nhân vật bằng tên chuẩn> <Tên nhân vật>: "<thoại tiếng Việt>"
 
 QUY TẮC
 1. Đánh số liên tục SCENE 1:, SCENE 2:, ... Mỗi scene chỉ có duy nhất một dòng bắt đầu bằng "SCENE".
 2. Mỗi scene đúng MỘT shot: một clip ${DURATION_PLACEHOLDER} giây không chứa được nhiều góc máy. Cần nhiều góc máy thì tách thành nhiều scene.
-3. Thoại: tối đa 2 câu ngắn (khoảng 15 từ) mỗi scene, luôn ghi tên nhân vật trước thoại và đặt thoại trong ngoặc kép. Máy quay hướng về đúng người đang nói.
-4. Liền mạch: nếu scene tiếp nối scene trước (cùng địa điểm, cùng thời điểm), mở đầu đúng vị trí, tư thế, ánh sáng mà scene trước kết thúc.
-5. Khi đổi địa điểm, nhảy thời gian hoặc chuyển sang tuyến nhân vật khác, viết [CUT] ngay sau "SCENE <số>:" trên cùng dòng.
-6. Luôn gọi nhân vật bằng đúng tên chuẩn, không thay bằng "anh ấy", "cô ta", "nàng".
-7. Giữ trang phục, kiểu tóc nhất quán giữa các scene, trừ khi truyện có thay đổi.
-8. Không mô tả chữ, phụ đề, logo hay biển hiệu có chữ trong khung hình.
+3. Dòng Shot viết bằng tiếng Anh (mô hình video hiểu tiếng Anh chính xác nhất), câu ngắn, mô tả trực diện cái máy quay nhìn thấy; tự tả lại nơi chốn trong câu đầu vì mô hình không đọc dòng "Bối cảnh". Chỉ thoại giữ tiếng Việt.
+4. Thoại: tối đa 2 câu ngắn (khoảng 15 từ) mỗi scene, luôn ghi tên nhân vật trước thoại và đặt thoại trong ngoặc kép. Máy quay hướng về đúng người đang nói.
+5. Liền mạch: nếu scene tiếp nối scene trước (cùng địa điểm, cùng thời điểm), mở đầu đúng vị trí, tư thế, ánh sáng mà scene trước kết thúc. Khi scene sau nối tiếp, kết thúc shot ở cỡ trung hoặc cận, thấy rõ gương mặt và trang phục của nhân vật chính (cả mũ, phụ kiện nếu có): frame cuối là ảnh mở đầu của scene sau, nên đừng kết thúc bằng cận tay, đồ vật hay một cảnh quá rộng.
+6. Khi đổi địa điểm, nhảy thời gian hoặc chuyển sang tuyến nhân vật khác, viết [CUT] ngay sau "SCENE <số>:" trên cùng dòng.
+7. Luôn gọi nhân vật bằng đúng tên chuẩn, không thay bằng "anh ấy", "cô ta", "nàng".
+8. Giữ trang phục, kiểu tóc nhất quán giữa các scene, trừ khi truyện có thay đổi.
+9. Không mô tả chữ, phụ đề, logo hay biển hiệu có chữ trong khung hình.
 
 Chỉ xuất các SCENE theo định dạng trên, không giải thích gì thêm.
 
@@ -42,17 +44,17 @@ VÍ DỤ (chỉ minh họa định dạng, không dùng lại nội dung):
 SCENE 1:
 Nhân vật: Min-woo
 Bối cảnh: Ngã tư Gangnam đêm mưa
-Shot: (Medium-wide tracking shot) Min-woo trong áo măng tô be bước xuống xe, khựng lại khi nhận ra bóng dáng quen thuộc bên kia đường; cuối shot máy lia sang vỉa hè đối diện.
+Shot: (Medium-wide tracking shot) A rainy Gangnam crossing at night, neon reflecting on wet asphalt. Min-woo in a beige trench coat steps out of a car and freezes as he recognizes someone across the street; the camera pans to the opposite sidewalk.
 
 SCENE 2:
 Nhân vật: Seo-yeon
 Bối cảnh: Ngã tư Gangnam đêm mưa
-Shot: (Medium shot, continuing the pan) Seo-yeon cầm ô trong suốt, mắt ngấn lệ, tay buông lỏng khiến chiếc ô rơi xuống mặt đường ướt. Seo-yeon: "Là anh thật sao?"
+Shot: (Medium shot, continuing the pan) The same rainy crossing. Seo-yeon holds a clear umbrella, her eyes filling with tears; her grip loosens and the umbrella drops onto the wet road. Seo-yeon: "Là anh thật sao?"
 
 SCENE 3: [CUT]
 Nhân vật: Seo-yeon
 Bối cảnh: Quán cà phê Bukchon
-Shot: (Wide establishing shot, slow dolly-in) Sáng hôm sau, nắng thu xuyên qua cửa kính, Seo-yeon ngồi bên cửa sổ đọc một lá thư.`;
+Shot: (Wide establishing shot, slow dolly-in) A small Bukchon café the next morning, autumn sun through the windows. Seo-yeon sits by the window reading a letter.`;
 
 // Default `film.style` for new projects: prepended to EVERY scene's video prompt, so it stays
 // short and purely visual. The scene's own action must not be drowned out by it.

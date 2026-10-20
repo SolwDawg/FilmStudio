@@ -146,25 +146,60 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export function sceneJob(film: Film, scene: FilmScene, paths: ProjectPaths, startFrame?: string, timeout?: number): VideoJob {
-  const flowNames = scene.characters
+// Flow characters saved for the cast of this scene (characters with a flowName).
+export function sceneFlowCharacters(film: Film, scene: FilmScene): string[] {
+  return scene.characters
     .map((name) => film.characters.find((character) => character.name === name)?.flowName)
     .filter((name): name is string => Boolean(name));
+}
+
+// How a scene that continues from the previous last frame is rendered. Flow takes characters only
+// in Ingredients mode, which has no start frame, so there is a choice:
+// - "frames": start exactly on the previous last frame (Frames mode, no characters). Seamless,
+//   but when that frame does not show the faces clearly, Flow invents new ones.
+// - "ingredients": Ingredients mode with the cast's Flow characters plus the previous last frame
+//   as a reference image. Faces stay on model; the cut is close but not frame-exact.
+// "ingredients" only applies when the scene has Flow characters; otherwise it falls back to frames.
+// Scenes without a start frame (first scene, [CUT]) always get their characters.
+export function sceneContinuity(film: Film, scene: FilmScene, startFrame?: string): "none" | "frames" | "ingredients" {
+  if (!startFrame) return "none";
+  const mode = scene.continuityMode ?? film.continuityMode ?? "frames";
+  return mode === "ingredients" && sceneFlowCharacters(film, scene).length > 0 ? "ingredients" : "frames";
+}
+
+const REFERENCE_CONTINUITY = "The shot opens on the reference image: same place, positions, framing and light.";
+
+export function sceneJob(film: Film, scene: FilmScene, paths: ProjectPaths, startFrame?: string, timeout?: number): VideoJob {
+  const continuity = sceneContinuity(film, scene, startFrame);
+  const prompt = buildScenePrompt(film, scene);
 
   return parseVideoJob({
     id: scene.id,
     type: "video",
     project: film.flowProject ?? film.flowProjectId,
-    prompt: buildScenePrompt(film, scene),
+    prompt: continuity === "ingredients" ? `${prompt}\n${REFERENCE_CONTINUITY}` : prompt,
     model: film.model,
     ratio: film.ratio,
     duration: scene.duration ?? film.duration,
     outputs: 1,
     out: paths.renders,
-    character: flowNames,
-    startFrame,
+    character: continuity === "frames" ? [] : sceneFlowCharacters(film, scene),
+    ingredients: continuity === "ingredients" ? [startFrame] : [],
+    startFrame: continuity === "frames" ? startFrame : undefined,
     timeout
   });
+}
+
+function renderNote(film: Film, scene: FilmScene, startFrame?: string): string {
+  const cast = sceneFlowCharacters(film, scene).join(", ");
+  switch (sceneContinuity(film, scene, startFrame)) {
+    case "ingredients":
+      return ` (Ingredients: Flow characters ${cast} + previous last frame as reference)`;
+    case "frames":
+      return ` (continuing from previous last frame)${cast ? `; Flow characters ${cast} not attached, Frames mode cannot take them (continuityMode "ingredients" can)` : ""}`;
+    default:
+      return cast ? ` with Flow characters ${cast}` : "";
+  }
 }
 
 function pickVideo(artifacts: { path: string }[]): string {
@@ -327,7 +362,7 @@ export async function renderFilm(paths: ProjectPaths, options: RenderOptions): P
     try {
       const startFrame = settings.continuity && !scene.cut ? await continuitySeed(paths, film, freshIndex, extract, log) : undefined;
       await updateSceneState(paths, scene.id, { status: "running", updatedAt: new Date().toISOString() });
-      log(`${scene.id}: rendering${startFrame ? " (continuing from previous last frame)" : ""}`);
+      log(`${scene.id}: rendering${renderNote(film, scene, startFrame)}`);
 
       const { video, flowUrl } = await renderWithRetries(film, scene, paths, startFrame, settings, options, sleep, log);
       await rememberFlowProject(paths, flowUrl, log);

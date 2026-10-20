@@ -28,13 +28,8 @@ import {
 } from "./dna.js";
 import { cropStoryboardGrid } from "./storyboard.js";
 import { buildSelfHealingPrompt } from "./healing.js";
-import {
-  DEFAULT_DIRECTIONAL_PROMPT,
-  DEFAULT_HEAL_INSTRUCTION,
-  DEFAULT_LOCATION_DIRECTIONAL_PROMPT,
-  DEFAULT_STORYBOARD_PROMPT,
-  DEFAULT_VIDEO_STYLE
-} from "./prompts.js";
+import { DEFAULT_HEAL_INSTRUCTION, DEFAULT_STORYBOARD_PROMPT } from "./prompts.js";
+import { DEFAULT_GENRE, GENRES, genrePreset, isGenreId } from "./genres.js";
 
 const MIME: Record<string, string> = {
   ".mp4": "video/mp4",
@@ -178,6 +173,10 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/genres") {
+      return json(res, 200, Object.entries(GENRES).map(([id, preset]) => ({ id, label: preset.label, description: preset.description })));
+    }
+
     // Import Project JSON
     if (parts[0] === "api" && parts[1] === "projects" && parts[2] === "import-json" && req.method === "POST") {
       const body = await readBody(req);
@@ -213,7 +212,8 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
       if (req.method === "POST") {
         const body = await readBody(req);
         if (!body.title) return json(res, 400, { error: "title is required" });
-        const { slug, paths } = await createProject(body.title);
+        if (body.genre !== undefined && !isGenreId(body.genre)) return json(res, 400, { error: `unknown genre: ${body.genre}` });
+        const { slug, paths } = await createProject(body.title, undefined, body.genre ?? DEFAULT_GENRE);
         const film = await loadFilm(paths);
         if (body.ratio) film.ratio = body.ratio;
         if (body.duration) film.duration = Number(body.duration);
@@ -265,11 +265,13 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
             (film.locations ?? []).map((l) => [l.name, buildLocationDnaImagePrompt({ name: l.name, traits: l.description }, film.locationDirectionalPrompt)])
           )
         };
+        // "Reset" on the dashboard returns to the project's genre preset, not the generic default.
+        const preset = genrePreset(film.genre);
         const defaults = {
-          directionalPrompt: DEFAULT_DIRECTIONAL_PROMPT,
-          locationDirectionalPrompt: DEFAULT_LOCATION_DIRECTIONAL_PROMPT,
+          directionalPrompt: preset.directionalPrompt,
+          locationDirectionalPrompt: preset.locationDirectionalPrompt,
           storyboardPrompt: DEFAULT_STORYBOARD_PROMPT,
-          style: DEFAULT_VIDEO_STYLE
+          style: preset.style
         };
         return json(res, 200, { slug, film, state, running: running.has(slug), referencePrompts, defaults });
       }
@@ -278,7 +280,7 @@ export async function startDashboard(requestedPort = 3333): Promise<Dashboard> {
         const body = await readBody(req);
         const film = await loadFilm(paths);
         const keys = [
-          "title", "ratio", "duration", "continuity", "model", "imageModel", "resolution",
+          "title", "ratio", "duration", "continuity", "continuityMode", "model", "imageModel", "resolution",
           "videoGenMode", "startFrameSource", "endFrameSource", "skipImageGen", "renderFromShotOnly",
           "autoMerge", "isStoryboardCropEnabled", "storyboardRows", "storyboardCols", "storyboardPrompt",
           "isAutoHealEnabled", "healInstruction", "isCelebrityCheckEnabled", "renderTimeout", "retryDelay",

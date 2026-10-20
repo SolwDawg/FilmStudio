@@ -7,9 +7,12 @@ import { CreditLimitError, GenerationBlockedError, GenerationFailedError } from 
 import type { FlowAutomation, FlowAutomationRunInput } from "../src/flow/types.js";
 import { planBatch, renderFilm } from "../src/studio/pipeline.js";
 import { createProject, loadFilm, loadState, saveFilm, slugify } from "../src/studio/project.js";
-import { buildScenePrompt, parseScript, scenesFromScript } from "../src/studio/script.js";
+import { buildScenePrompt, parseScript, scenesFromScript, videoShotText } from "../src/studio/script.js";
 import { startDashboard } from "../src/studio/server.js";
 import { DASHBOARD_HTML } from "../src/studio/dashboard.js";
+import { GENRES } from "../src/studio/genres.js";
+import { buildStoryChunkPrompt } from "../src/studio/breakdown.js";
+import { DURATION_PLACEHOLDER } from "../src/studio/prompts.js";
 
 const SCRIPT = `SCENE 1:
 Min-woo steps out of a car in the rain.
@@ -99,6 +102,14 @@ describe("render pipeline", () => {
     await writeFile(png, "png");
   };
 
+  it("keeps film.json fields it does not know when saving", async () => {
+    const { paths } = await createProject("Future Film");
+    const raw = JSON.parse(await readFile(paths.film, "utf8"));
+    await writeFile(paths.film, JSON.stringify({ ...raw, futureSetting: "keep me" }));
+    await saveFilm(paths, await loadFilm(paths));
+    expect(JSON.parse(await readFile(paths.film, "utf8")).futureSetting).toBe("keep me");
+  });
+
   it("chains last frames into the next scene except across a hard cut", async () => {
     const paths = await setup();
     const calls: FlowAutomationRunInput[] = [];
@@ -111,8 +122,39 @@ describe("render pipeline", () => {
 
     const first = calls[0].job;
     expect(first.character).toEqual(["Minwoo-Flow"]);
+    // scene-03 also has Minwoo but continues from scene-02's last frame: Flow's Frames mode
+    // cannot take characters, so the frame carries the look instead.
+    const third = calls[2].job;
+    expect(third.character).toEqual([]);
     const state = await loadState(paths);
     expect(Object.values(state.scenes).every((scene) => scene.status === "done")).toBe(true);
+  });
+
+  it("continues in Ingredients mode with the cast's Flow characters when continuityMode is ingredients", async () => {
+    const paths = await setup();
+    const film = await loadFilm(paths);
+    film.continuityMode = "ingredients";
+    await saveFilm(paths, film);
+    const calls: FlowAutomationRunInput[] = [];
+    await renderFilm(paths, { automation: fakeFlow(calls), extractFrame: fakeExtract });
+
+    const third = calls[2].job;
+    if (third.type !== "video") throw new Error("expected a video job");
+    expect(third.startFrame).toBeUndefined();
+    expect(third.character).toEqual(["Minwoo-Flow"]);
+    expect(third.ingredients).toHaveLength(1);
+    expect(third.ingredients[0]).toMatch(/scene-02\.last\.png$/);
+    expect(third.prompt).toContain("opens on the reference image");
+
+    // A continuing scene without Flow characters keeps the exact frame cut.
+    film.characters[0].flowName = undefined;
+    await saveFilm(paths, film);
+    const plain: FlowAutomationRunInput[] = [];
+    await renderFilm(paths, { automation: fakeFlow(plain), extractFrame: fakeExtract, force: true });
+    const continued = plain[2].job;
+    if (continued.type !== "video") throw new Error("expected a video job");
+    expect(continued.startFrame).toMatch(/scene-02\.last\.png$/);
+    expect(continued.ingredients).toEqual([]);
   });
 
   it("resumes: skips finished scenes and retries the failed one", async () => {
@@ -329,6 +371,53 @@ describe("render pipeline", () => {
     expect(yaml).not.toContain("startFrame");
   });
 
+  it("starts a project from a genre preset", async () => {
+    const { paths } = await createProject("Truc Lam", undefined, "wuxia");
+    const film = await loadFilm(paths);
+    expect(film.genre).toBe("wuxia");
+    expect(film.style).toBe(GENRES.wuxia.style);
+    expect(film.storyPrompt).toBe(GENRES.wuxia.storyPrompt);
+    expect(film.directionalPrompt).toBe(GENRES.wuxia.directionalPrompt);
+
+    // The default genre stores only its style, so it keeps following the default prompts.
+    const drama = await loadFilm((await createProject("Plain")).paths);
+    expect(drama.genre).toBe("drama");
+    expect(drama.style).toBe(GENRES.drama.style);
+    expect(drama.storyPrompt).toBeUndefined();
+    expect(drama.directionalPrompt).toBeUndefined();
+
+    // Every genre's story prompt keeps the scene format the script parser reads.
+    for (const preset of Object.values(GENRES)) {
+      const prompt = buildStoryChunkPrompt("chunk", preset.storyPrompt, 8);
+      expect(prompt).toContain("SCENE <số>:");
+      expect(prompt).not.toContain(DURATION_PLACEHOLDER);
+    }
+  });
+
+  it("parses the wuxia example script and finds its cast", async () => {
+    const script = await readFile("examples/kiem-hiep-truc-lam.md", "utf8");
+    const cast = [
+      { name: "Lăng Phong", aliases: [], description: "", images: [] },
+      { name: "Mộ Dung Tuyết", aliases: [], description: "", images: [] }
+    ];
+    const scenes = scenesFromScript(script, cast);
+    expect(scenes).toHaveLength(7);
+    expect(scenes.map((scene) => scene.cut)).toEqual([false, false, false, false, false, true, false]);
+    expect(scenes[0].characters).toEqual(["Lăng Phong"]);
+    expect(scenes[1].characters).toEqual(["Lăng Phong", "Mộ Dung Tuyết"]);
+    expect(scenes[5].characters).toEqual(["Mộ Dung Tuyết"]);
+  });
+
+  it("sends only the Shot text of a structured scene to the video model", () => {
+    const [scene] = parseScript(`SCENE 1:
+Nhân vật: Lăng Phong
+Bối cảnh: Rừng trúc dưới mưa
+Shot: (Wide shot) Misty bamboo forest. Lăng Phong waits. Lăng Phong: "Ai đó?"`);
+    expect(videoShotText(scene.prompt)).toBe('(Wide shot) Misty bamboo forest. Lăng Phong waits. Lăng Phong: "Ai đó?"');
+    // Free-form prompts, and prose that merely mentions a label word, pass through unchanged.
+    expect(videoShotText("(Wide shot) Rain. Location: unknown.")).toBe("(Wide shot) Rain. Location: unknown.");
+  });
+
   it("ships dashboard JavaScript that parses", () => {
     // A single missing brace once made the browser drop the whole script, so no button worked.
     const scripts = [...DASHBOARD_HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
@@ -345,6 +434,17 @@ describe("render pipeline", () => {
     try {
       const list = await fetch(`${dash.url}/api/projects`);
       expect((await list.json()) as unknown[]).toHaveLength(1);
+
+
+      const genres = (await (await fetch(`${dash.url}/api/genres`)).json()) as Array<{ id: string }>;
+      expect(genres.map((genre) => genre.id)).toEqual(Object.keys(GENRES));
+      const local = { "content-type": "application/json", origin: dash.url };
+      const bad = await fetch(`${dash.url}/api/projects`, { method: "POST", headers: local, body: JSON.stringify({ title: "X", genre: "noir" }) });
+      expect(bad.status).toBe(400);
+      const created = await fetch(`${dash.url}/api/projects`, { method: "POST", headers: local, body: JSON.stringify({ title: "Kiem", genre: "wuxia" }) });
+      expect(created.status).toBe(201);
+      const detail = (await (await fetch(`${dash.url}/api/projects/kiem`)).json()) as { defaults: { style: string } };
+      expect(detail.defaults.style).toBe(GENRES.wuxia.style);
 
       const media = await fetch(`${dash.url}/media/test-film/renders/a.mp4`);
       expect(media.status).toBe(200);

@@ -675,6 +675,14 @@ export const DASHBOARD_HTML = `<!doctype html>
       </select>
     </div>
 
+    <div class="config-item" title="Cảnh nối tiếp: Frames bắt đầu đúng frame cuối cảnh trước (không gắn được character Flow); Ingredients gắn character Flow + frame cuối làm ảnh tham chiếu (giữ gương mặt, điểm nối không khớp tuyệt đối)">
+      <span>Nối cảnh:</span>
+      <select id="cfgContinuityMode">
+        <option value="frames">Frames (khớp frame)</option>
+        <option value="ingredients">Ingredients (giữ nhân vật)</option>
+      </select>
+    </div>
+
     <div class="toggle-btn active" id="togContinuity" title="Tự động lấy frame cuối scene trước làm mồi cho scene sau (I2V Continuity)">
       <span>🔗 Continuity</span>
     </div>
@@ -957,6 +965,11 @@ Ví dụ:
       <label style="font-size:11.5px; color:var(--muted); display:block; margin-bottom:4px;">Tên bộ phim</label>
       <input type="text" id="newTitle" placeholder="Ví dụ: Mùa Thu Seoul..." style="width:100%;">
     </div>
+    <div>
+      <label style="font-size:11.5px; color:var(--muted); display:block; margin-bottom:4px;">Thể loại</label>
+      <select id="newGenre" style="width:100%;"><option value="drama">Tâm lý, tình cảm</option></select>
+      <div id="newGenreHint" style="font-size:11px; color:var(--muted); margin-top:4px;"></div>
+    </div>
     <div class="grid-2">
       <div>
         <label style="font-size:11.5px; color:var(--muted); display:block; margin-bottom:4px;">Tỉ lệ khung hình</label>
@@ -1207,6 +1220,7 @@ async function loadActiveProject() {
   $("cfgResolution").value = currentFilm.resolution || "720p";
   $("cfgVideoGenMode").value = currentFilm.videoGenMode || "r2v";
   $("cfgStartFrameSource").value = currentFilm.startFrameSource || "continuity";
+  $("cfgContinuityMode").value = currentFilm.continuityMode || "frames";
 
   // Toggles
   setToggle("togContinuity", currentFilm.continuity !== false);
@@ -1247,6 +1261,7 @@ async function syncConfig(patch = {}) {
     resolution: $("cfgResolution").value,
     videoGenMode: $("cfgVideoGenMode").value,
     startFrameSource: $("cfgStartFrameSource").value,
+    continuityMode: $("cfgContinuityMode").value,
     continuity: isToggleActive("togContinuity"),
     strictActorMatch: isToggleActive("togStrictActor"),
     strictLocationMatch: isToggleActive("togStrictLoc"),
@@ -1260,7 +1275,7 @@ async function syncConfig(patch = {}) {
 }
 
 // Bind config events
-["cfgModel", "cfgImageModel", "cfgRatio", "cfgDuration", "cfgResolution", "cfgVideoGenMode", "cfgStartFrameSource"].forEach(id => {
+["cfgModel", "cfgImageModel", "cfgRatio", "cfgDuration", "cfgResolution", "cfgVideoGenMode", "cfgStartFrameSource", "cfgContinuityMode"].forEach(id => {
   $(id).onchange = () => syncConfig();
 });
 ["togContinuity", "togStrictActor", "togStrictLoc", "togSkipKeyframe", "togRenderFromShot", "togAutoMerge"].forEach(id => {
@@ -1688,7 +1703,15 @@ $("fileJsonPicker").onchange = (e) => {
 
 // Project controls
 $("projectSelect").onchange = (e) => { activeSlug = e.target.value; loadActiveProject(); };
-$("btnNewProject").onclick = () => $("modalNewProject").classList.add("open");
+$("btnNewProject").onclick = async () => {
+  $("modalNewProject").classList.add("open");
+  try {
+    const genres = await api("/api/genres");
+    $("newGenre").innerHTML = genres.map((g) => '<option value="' + g.id + '" data-hint="' + g.description.replace(/"/g, "&quot;") + '">' + g.label + '</option>').join("");
+    $("newGenre").onchange = () => { $("newGenreHint").textContent = $("newGenre").selectedOptions[0]?.dataset.hint || ""; };
+    $("newGenre").onchange();
+  } catch (err) { /* keep the built-in default option */ }
+};
 $("btnCancelNewProject").onclick = () => $("modalNewProject").classList.remove("open");
 $("btnConfirmNewProject").onclick = async () => {
   const title = $("newTitle").value.trim();
@@ -1697,7 +1720,8 @@ $("btnConfirmNewProject").onclick = async () => {
     const res = await api("/api/projects", "POST", {
       title,
       ratio: $("newRatio").value,
-      duration: $("newDuration").value
+      duration: $("newDuration").value,
+      genre: $("newGenre").value
     });
     $("modalNewProject").classList.remove("open");
     activeSlug = res.slug;

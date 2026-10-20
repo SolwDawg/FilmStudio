@@ -21,7 +21,7 @@ export function flowLocators(page: Page) {
     failedMarker: page.getByText(/generation failed|couldn.?t generate|something went wrong|unreachable|not available|unavailable/i),
     manualActionMarker: page.getByText(/verify your identity|sign in to continue|consent required/i),
     characterPrompt: page.locator('.ProseMirror[contenteditable="true"], [contenteditable="true"]'),
-    characterCreateButton: page.locator("button").filter({ hasText: /arrow_forward/ }).filter({ hasText: /create/i }),
+    characterCreateButton: page.getByRole("button", { name: /^(start generation|create)$/i }),
     characterUploadButton: page.locator("button").filter({ hasText: /^upload/i }),
     characterAddFromProject: page.locator("button").filter({ hasText: /add from project/i })
   };

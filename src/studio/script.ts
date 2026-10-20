@@ -43,6 +43,20 @@ export function scenesFromScript(text: string, characters: FilmCharacter[]): Fil
   }));
 }
 
+// Structured scripts (the story prompt's format) carry "Nhân vật: ... Bối cảnh: ... Shot: ..." on
+// one line once parsed. Those labels and the cast list are for this tool (cast detection, location
+// matching), not for the video model: sent as-is they were Vietnamese noise in an English shot
+// description, and the cast already goes out with descriptions on the "Characters —" line. The
+// Shot text describes the place itself, so only it is sent. Free-form prompts pass through unchanged.
+const SCENE_LABEL = /(?:^|\s)(Nhân vật|Diễn viên|Characters?|Bối cảnh|Địa điểm|Location|Shot|Góc quay)\s*:\s*/giu;
+
+export function videoShotText(prompt: string): string {
+  const labels = [...prompt.matchAll(SCENE_LABEL)];
+  const shot = labels.find((label) => /^(shot|góc quay)$/iu.test(label[1]));
+  if (!shot || labels[0].index !== 0) return prompt.trim();
+  return prompt.slice((shot.index ?? 0) + shot[0].length).trim();
+}
+
 // What Flow actually receives: style + who is in the shot (so faces and outfits stay consistent
 // across scenes) + location architecture + the scene description.
 export function buildScenePrompt(film: Film, scene: FilmScene): string {
@@ -78,7 +92,7 @@ export function buildScenePrompt(film: Film, scene: FilmScene): string {
     film.style.trim(),
     cast.length > 0 ? `Characters — ${cast.join("; ")}.` : "",
     locationText,
-    scene.prompt.trim()
+    videoShotText(scene.prompt)
   ]
     .filter(Boolean)
     .join("\n");

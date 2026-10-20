@@ -37,7 +37,7 @@ export interface CreateCharacterInput {
   description?: string;
   voice?: string;
   model?: "nano-banana-2" | "nano-banana-pro";
-  preset?: "familiar" | "eccentric" | "wicked" | "fantastical";
+  preset?: "familiar" | "eccentric" | "professional" | "wildcard" | "wicked" | "fantastical";
   images: string[];
   fromProject: string[];
   project?: string;

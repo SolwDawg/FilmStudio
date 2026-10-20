@@ -21,6 +21,7 @@ import { startDashboard } from "./server.js";
 import { openFlowAutomation } from "./session.js";
 import { chunkStory, buildStoryChunkPrompt } from "./breakdown.js";
 import { buildActorDnaImagePrompt } from "./dna.js";
+import { DEFAULT_GENRE, GENRES, genrePreset, isGenreId, type GenreId } from "./genres.js";
 
 export interface CreateStudioProgramOptions {
   // Tests inject a fake instead of driving a real browser.
@@ -57,10 +58,18 @@ export function createStudioProgram(options: CreateStudioProgramOptions = {}): C
     .description("Create a film project (optionally importing a script right away).")
     .argument("<title>", "film title")
     .option("--script <file>", "script file with SCENE 1:, SCENE 2: ... sections")
-    .action(async (title: string, command: { script?: string }) => {
-      const { slug, paths } = await createProject(title);
-      console.log(`created project "${slug}" at ${paths.dir}`);
+    .option("--genre <genre>", `genre preset: ${Object.keys(GENRES).join(", ")} (see film genres)`, parseGenre, DEFAULT_GENRE)
+    .action(async (title: string, command: { script?: string; genre: GenreId }) => {
+      const { slug, paths } = await createProject(title, undefined, command.genre);
+      console.log(`created project "${slug}" at ${paths.dir} (genre: ${GENRES[command.genre].label})`);
       if (command.script) await importScript(slug, command.script);
+    });
+
+  program
+    .command("genres")
+    .description("List the genre presets a new project can start from.")
+    .action(() => {
+      for (const [id, preset] of Object.entries(GENRES)) console.log(`${id}	${preset.label}	${preset.description}`);
     });
 
   program
@@ -89,14 +98,23 @@ export function createStudioProgram(options: CreateStudioProgramOptions = {}): C
     .option("-o, --output <file>", "write breakdown prompts or parsed script to a file")
     .option("--chunk-words <n>", "words per chunk", (val) => Number.parseInt(val, 10), 150)
     .option("--duration <s>", "seconds per scene clip the script is written for", (val) => Number.parseInt(val, 10), 8)
-    .action(async (storyFile: string, command: { output?: string; chunkWords: number; duration: number }) => {
+    .option("--genre <genre>", `genre preset whose instructions to use: ${Object.keys(GENRES).join(", ")}`, parseGenre)
+    .option("--project <project>", "use this project's story prompt (storyPrompt) and scene duration")
+    .action(async (storyFile: string, command: { output?: string; chunkWords: number; duration: number; genre?: GenreId; project?: string }) => {
+      let instructions = command.genre ? genrePreset(command.genre).storyPrompt : undefined;
+      let duration = command.duration;
+      if (command.project) {
+        const film = await loadFilm(projectPaths(command.project));
+        instructions = film.storyPrompt || genrePreset(film.genre).storyPrompt;
+        duration = film.duration;
+      }
       const text = await readFile(storyFile, "utf8");
       const chunks = chunkStory(text, command.chunkWords);
       console.log(`Story analyzed: ${chunks.length} chunks generated (~${command.chunkWords} words each).`);
 
       let fullPromptBundle = "";
       for (let i = 0; i < chunks.length; i++) {
-        fullPromptBundle += `\n\n=== CHUNK ${i + 1}/${chunks.length} ===\n${buildStoryChunkPrompt(chunks[i], undefined, command.duration)}`;
+        fullPromptBundle += `\n\n=== CHUNK ${i + 1}/${chunks.length} ===\n${buildStoryChunkPrompt(chunks[i], instructions, duration)}`;
       }
 
       if (command.output) {
@@ -294,4 +312,9 @@ export async function runStudioCli(argv: string[], options: CreateStudioProgramO
     console.error(messageForError(error));
     return exitCodeForError(error);
   }
+}
+
+function parseGenre(value: string): GenreId {
+  if (!isGenreId(value)) throw new InvalidArgumentError(`must be one of: ${Object.keys(GENRES).join(", ")}`);
+  return value;
 }

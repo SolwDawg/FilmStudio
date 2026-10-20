@@ -84,6 +84,11 @@ describe("character schema", () => {
   it("rejects missing name", () => {
     expect(() => parseCharacter({ prompt: "x" })).toThrow();
   });
+  it("accepts names with diacritics but not path characters", () => {
+    expect(parseCharacter({ name: "Mộ Dung Tuyết", prompt: "x" }).name).toBe("Mộ Dung Tuyết");
+    expect(parseCharacter({ name: "Seo-yeon", prompt: "x" }).name).toBe("Seo-yeon");
+    expect(() => parseCharacter({ name: "a/b", prompt: "x" })).toThrow();
+  });
 });
 
 describe("tool schema", () => {

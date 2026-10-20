@@ -37,6 +37,10 @@ film character add mua-thu-seoul Seoyeon --alias Seo-yeon --flow-name "Seo-yeon"
      --description "Hàn Quốc, 25 tuổi, áo len cổ lọ màu kem"
 film import mua-thu-seoul projects/mua-thu-seoul/script.md   # nhận diện lại ai xuất hiện ở cảnh nào
 
+# 2b. (Tuỳ chọn) Tạo character trong Flow để giữ gương mặt nhất quán, rồi gán bằng --flow-name
+gflow character create --project <flowProjectId> --name Seo-yeon      --prompt "Photorealistic Korean woman, 25, long black hair, cream turtleneck sweater"      --description "warm and shy"
+gflow character list --project <flowProjectId>
+
 # 3. Chỉnh style/model/tỉ lệ nếu cần: projects/mua-thu-seoul/film.json
 
 # 4. Render (có thể dừng/chạy lại — cảnh đã xong được bỏ qua)
@@ -59,6 +63,25 @@ film stitch mua-thu-seoul          # -> projects/mua-thu-seoul/final.mp4
 - Engine luôn mở Flow bằng giao diện tiếng Anh (`hl=en`), nên tài khoản Google dùng ngôn ngữ nào cũng chạy được.
 - Lần đầu tải frame lên, Flow có thể hỏi "Rights to use this image": engine dừng chờ bạn trả lời trong cửa sổ Chrome (tối đa 5 phút), không tự đồng ý.
 - `film stitch --only-rendered` ghép bản xem trước từ các cảnh đã render.
+- **Character của Flow** (`flowName`): Flow chỉ gắn character ở chế độ *Ingredients*; chế độ *Frames* (bắt đầu đúng frame cuối cảnh trước) không nhận character. Cảnh mở đầu một đoạn (cảnh đầu tiên, cảnh `[CUT]`, hoặc khi tắt continuity) luôn được gắn character. Cảnh nối tiếp tuỳ theo `continuityMode` trong `film.json` (hoặc ô "Nối cảnh" trên dashboard; ghi đè từng cảnh bằng `scenes[].continuityMode`):
+  - `"frames"` (mặc định): bắt đầu đúng frame cuối cảnh trước, liền mạch tuyệt đối, nhưng không gắn character. Nếu frame cuối không thấy rõ mặt nhân vật (cận tay, cảnh quá rộng), Flow sẽ tự "đoán" ra gương mặt khác.
+  - `"ingredients"`: gắn character Flow, kèm frame cuối cảnh trước làm ảnh tham chiếu. Gương mặt giữ đúng, đổi lại điểm nối gần giống chứ không khớp từng pixel. Chỉ áp dụng cho cảnh có character Flow; cảnh không có thì vẫn dùng `"frames"`.
+
+  Character thuộc về từng project Flow, nên phải tạo trong đúng project mà `flowProjectId` trỏ tới. Thiếu character thì engine báo lỗi **trước** khi bấm tạo video (không tốn credit). Prompt kịch bản yêu cầu cảnh nối tiếp kết thúc ở cỡ trung hoặc cận, thấy rõ mặt nhân vật, để frame cuối mang theo được gương mặt.
+
+### Thể loại (genre preset)
+
+Mỗi dự án bắt đầu từ một preset thể loại (`src/studio/genres.ts`). Preset gồm: style video chèn vào mọi cảnh, prompt phân rã truyện (`storyPrompt`), prompt ảnh tham chiếu nhân vật và bối cảnh, và quy tắc ảnh. Các giá trị này được ghi vào `film.json` lúc tạo dự án, sau đó sửa tự do trên dashboard hoặc trong file.
+
+- `drama`: phim người thật hiện đại, nhịp chậm, cảm xúc. Ví dụ: `examples/kdrama-autumn.md`.
+- `wuxia`: kiếm hiệp cổ trang. Hán phục, võ thuật có trọng lượng thật; mỗi scene một nhịp động tác theo một hướng, scene giao đấu không có thoại, bay nhảy dùng cảnh rộng, không rút kiếm giữa trận, hiệu ứng (nước, lá) phải có nguyên nhân vật lý; thoại cổ phong; không máu me. Ví dụ: `examples/kiem-hiep-truc-lam.md`.
+
+Với mọi thể loại, dòng `Shot:` của kịch bản viết bằng tiếng Anh (mô hình video hiểu tiếng Anh chính xác nhất), chỉ thoại giữ tiếng Việt. Flow chỉ nhận nội dung sau `Shot:`; các dòng `Nhân vật:`/`Bối cảnh:` dùng để nhận diện nhân vật và bối cảnh. Mô tả nhân vật (`--description`) cũng nên viết bằng tiếng Anh, vì nó được gửi kèm mọi cảnh có nhân vật đó.
+
+```bash
+film new "Kiếm Hiệp Trúc Lâm" --genre wuxia --script examples/kiem-hiep-truc-lam.md
+film breakdown truyen.txt --project kiem-hiep-truc-lam   # prompt phân rã theo thể loại của dự án
+```
 
 ### Kịch bản
 
@@ -70,7 +93,8 @@ film stitch mua-thu-seoul          # -> projects/mua-thu-seoul/final.mp4
 
 | Lệnh | Việc |
 | --- | --- |
-| `film new <title> [--script f]` | Tạo dự án trong `projects/<slug>/` |
+| `film new <title> [--script f] [--genre g]` | Tạo dự án trong `projects/<slug>/`, bắt đầu từ preset thể loại (mặc định `drama`) |
+| `film genres` | Danh sách preset thể loại: `drama` (tâm lý, tình cảm), `wuxia` (kiếm hiệp cổ trang) |
 | `film list` / `film status <p>` | Danh sách dự án / trạng thái từng cảnh |
 | `film import <p> <script>` | Thay danh sách cảnh bằng kịch bản mới (xoá tiến độ cũ) |
 | `film character add <p> <name>` | `--description`, `--alias`, `--image`, `--flow-name` (tên character đã lưu trong Flow, truyền vào `--character`) |

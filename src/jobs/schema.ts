@@ -111,10 +111,11 @@ export const parseAgentInstruction = (v: unknown): AgentInstructionSpec => agent
 export const parseAgentRun = (v: unknown): AgentRunSpec => agentRunSchema.parse(v);
 
 export const CHARACTER_MODELS = ["nano-banana-2", "nano-banana-pro"] as const;
-export const CHARACTER_PRESETS = ["familiar", "eccentric", "wicked", "fantastical"] as const;
+export const CHARACTER_PRESETS = ["familiar", "eccentric", "professional", "wildcard", "wicked", "fantastical"] as const;
 
 export const characterSchema = z.object({
-  name: z.string().min(1).regex(/^[a-zA-Z0-9._ -]+$/),
+  // Letters in any script: cast names are often Vietnamese ("Lăng Phong") or Korean.
+  name: z.string().min(1).regex(/^[\p{L}\p{M}\p{N}._ -]+$/u),
   prompt: z.string().min(1),
   description: z.string().min(1).optional(),
   voice: z.string().min(1).optional(),

@@ -317,7 +317,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       if (!["nano-banana-2", "nano-banana-pro"].includes(v)) throw new InvalidArgumentError("must be nano-banana-2 or nano-banana-pro");
       return v;
     })
-    .option("--preset <preset>", "familiar|eccentric|wicked|fantastical")
+    .option("--preset <preset>", "familiar|eccentric|professional|wildcard|wicked|fantastical")
     .option("--image <path...>", "reference image(s) to upload")
     .option("--from-project <name...>", "reference asset name(s) from the project")
     .option("--out <path>", "output directory", "./gflow-output")

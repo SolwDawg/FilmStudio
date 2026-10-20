@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { z } from "zod";
-import { DEFAULT_VIDEO_STYLE } from "./prompts.js";
+import { DEFAULT_GENRE, GENRES, type GenreId } from "./genres.js";
 
 const slugPattern = /^[a-z0-9][a-z0-9-]*$/;
 const idPattern = /^[a-zA-Z0-9._-]+$/;
@@ -29,6 +29,8 @@ export const filmSceneSchema = z.object({
   startFrameImage: z.string().optional(),
   lastFrameImage: z.string().optional(),
   connectShot: z.boolean().optional(),
+  // Overrides the film's continuityMode for this scene.
+  continuityMode: z.enum(["frames", "ingredients"]).optional(),
   locationName: z.string().optional(),
   dialogue: z.string().optional(),
   isRewritten: z.boolean().optional(),
@@ -54,6 +56,10 @@ export const filmSchema = z.object({
   startFrameSource: z.string().optional(),
   endFrameSource: z.string().optional(),
   continuity: z.boolean().default(true),
+  // How a scene continues from the previous one (see sceneJob): "frames" starts it exactly on the
+  // previous last frame; "ingredients" passes that frame as a reference image together with the
+  // cast's Flow characters, trading an exact cut for faces that stay on model.
+  continuityMode: z.enum(["frames", "ingredients"]).optional(),
   skipImageGen: z.boolean().optional(),
   renderFromShotOnly: z.boolean().optional(),
   autoMerge: z.boolean().optional(),
@@ -79,6 +85,10 @@ export const filmSchema = z.object({
   storyConcurrency: z.number().optional(),
   storyDelay: z.number().optional(),
   imageProductionRule: z.string().optional(),
+  // Genre preset the project was created from (genres.ts); informational once created.
+  genre: z.string().optional(),
+  // Instructions for the story-breakdown LLM prompt (`film breakdown`); empty uses the default.
+  storyPrompt: z.string().optional(),
   directionalPrompt: z.string().optional(),
   locationDirectionalPrompt: z.string().optional(),
   style: z.string().default(""),
@@ -95,7 +105,10 @@ export const filmSchema = z.object({
   dnaDelay: z.number().optional(),
   sceneScale: z.number().optional(),
   isPaused: z.boolean().optional()
-});
+})
+  // Keep fields this version does not know: a dashboard still running older code must not drop
+  // what a newer CLI wrote (it once erased flowProjectId on every save).
+  .passthrough();
 
 export type FilmCharacter = z.infer<typeof filmCharacterSchema>;
 export type FilmLocation = z.infer<typeof filmLocationSchema>;
@@ -167,12 +180,16 @@ export async function listProjects(root = projectsRoot()): Promise<string[]> {
     .sort();
 }
 
-export async function createProject(title: string, root = projectsRoot()): Promise<{ slug: string; paths: ProjectPaths }> {
+export async function createProject(
+  title: string,
+  root = projectsRoot(),
+  genre: GenreId = DEFAULT_GENRE
+): Promise<{ slug: string; paths: ProjectPaths }> {
   const slug = slugify(title);
   const paths = projectPaths(slug, root);
   if (existsSync(paths.film)) throw new Error(`Project already exists: ${slug}`);
   await mkdir(paths.renders, { recursive: true });
-  await saveFilm(paths, filmSchema.parse({ title, style: DEFAULT_VIDEO_STYLE }));
+  await saveFilm(paths, filmSchema.parse({ title, genre, ...genreFields(genre) }));
   return { slug, paths };
 }
 
@@ -200,6 +217,18 @@ async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 50 * (attempt + 1)));
     }
   }
+}
+
+// The preset's prompts, minus those equal to the default genre's: a project keeps following the
+// default prompts (and their later improvements) unless its genre really changes them.
+function genreFields(genre: GenreId): Partial<Film> {
+  const preset = GENRES[genre];
+  const base = GENRES[DEFAULT_GENRE];
+  const fields: Partial<Film> = { style: preset.style };
+  for (const key of ["storyPrompt", "directionalPrompt", "locationDirectionalPrompt", "imageProductionRule"] as const) {
+    if (preset[key] !== base[key]) fields[key] = preset[key];
+  }
+  return fields;
 }
 
 export async function saveFilm(paths: ProjectPaths, film: Film): Promise<void> {

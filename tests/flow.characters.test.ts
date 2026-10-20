@@ -14,17 +14,17 @@ describe("CharacterPage", () => {
           contentType: "text/html",
           body: `
             <button>accessibility_new Characters</button>
-            <div role="button">
-              <a href="/fx/tools/flow/project/abc/character/char-1">
-                <span>accessibility_new</span>
-                <img alt="Untitled Character" src="https://example.test/thumb.png">
-              </a>
-              <span>Untitled Character</span>
-            </div>
+            <flow-grid-tile-container role="group" aria-label="Minwoo">
+              <flow-character-tile>
+                <img alt="Character thumbnail" src="https://example.test/thumb.png">
+                <span class="character-tile-name">Minwoo</span>
+                <mat-icon>accessibility_new</mat-icon>
+              </flow-character-tile>
+            </flow-grid-tile-container>
           `
         });
       });
-      await page.route(/\/fx\/tools\/flow\/project\/abc\/characters(\?.*)?$/, async (route) => {
+      await page.route(/\/fx\/tools\/flow\/project\/abc\/character(\?.*)?$/, async (route) => {
         await route.fulfill({
           contentType: "text/html",
           body: `
@@ -39,7 +39,7 @@ describe("CharacterPage", () => {
 
       expect(characters).toEqual([
         {
-          name: "Untitled Character",
+          name: "Minwoo",
           thumbnailUrl: "https://example.test/thumb.png"
         }
       ]);

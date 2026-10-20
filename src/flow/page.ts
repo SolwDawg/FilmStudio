@@ -14,7 +14,16 @@ import { downloadResult, type DownloadQuality } from "./download.js";
 import type { GFlowJob } from "../jobs/schema.js";
 import type { FlowAutomation, FlowAutomationRunInput, FlowJobResult } from "./types.js";
 import { flowLocators } from "./locators.js";
-import { dismissOpenLayers, pickOption, pickModel, confirmPicker, navigateToProject, projectIdFromUrl, projectSubUrl } from "./ui.js";
+import {
+  confirmPicker,
+  dismissOpenLayers,
+  navigateToProject,
+  pickModel,
+  pickOption,
+  projectIdFromUrl,
+  projectSubUrl,
+  waitForUploadConsent
+} from "./ui.js";
 
 // The project's own page (/project/<id>), as opposed to a clip viewer (/edit/<tile>) or a scene.
 export function isProjectGridUrl(url: string): boolean {
@@ -25,6 +34,24 @@ export function isProjectGridUrl(url: string): boolean {
 // same media must be compared by its path (flow-content.google/image/<id>), not the full URL.
 export function mediaKey(src: string): string {
   return /^https?:/i.test(src) ? src.split(/[?#]/)[0] : src;
+}
+
+// Settings-popover radios, whose text is "<icon ligature><label>" (Oct 2026: "videocamVideo",
+// "crop_freeFrames", "chrome_extensionIngredients").
+export const MODE_LABEL = {
+  image: /^(image)?\s*Image$/i,
+  video: /^(videocam)?\s*Vid[eé]o$/i,
+  frames: /^(crop_free)?\s*Frames$/i,
+  ingredients: /^(chrome_extension)?\s*Ingr[eé]dients$/i
+};
+
+const CHIP_SELECTOR = "flow-ingredient-bar flow-ingredient-chip";
+
+// Matches a picker tile carrying `name` as a whole word (tiles also show a type label such as
+// "Image"), so "Min" does not pick "Minwoo".
+export function characterLabel(name: string): RegExp {
+  const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\s)${escaped}(\\s|$)`, "i");
 }
 
 // Sources on the page now whose media was not there before submitting, one per media item.
@@ -92,6 +119,11 @@ export class FlowPage implements FlowAutomation {
 
   async runJob(input: FlowAutomationRunInput): Promise<FlowJobResult> {
     const locators = flowLocators(this.page);
+    const usesIngredients = Boolean(input.job.character?.length || input.job.ingredients?.length);
+    if (input.job.type === "video" && usesIngredients && (input.job.startFrame || input.job.endFrame)) {
+      // Characters and reference images are Ingredients; Frames mode has only the Start/End slots.
+      throw new UiContractError("Flow takes characters and ingredient images only in Ingredients mode, which has no start/end frame: use ingredients or frames, not both");
+    }
     if (input.job.project) {
       await navigateToProject(this.page, input.job.project);
       await locators.promptBox.first().waitFor({ state: "visible", timeout: 20000 }).catch(() => undefined);
@@ -113,9 +145,7 @@ export class FlowPage implements FlowAutomation {
       throw new GenerationFailedError("Could not find the Flow prompt box. Open or create a project first.");
     }
 
-    for (const name of input.job.character ?? []) {
-      await this.referenceCharacter(name);
-    }
+    if (usesIngredients) await this.addIngredients(input.job.ingredients ?? [], input.job.character ?? []);
 
     await this.showAllMedia();
     const before = await this.settledResultKeys(input.job.type);
@@ -266,13 +296,15 @@ export class FlowPage implements FlowAutomation {
     await this.page.waitForTimeout(700);
 
     // Mode first — switching it changes which ratios/durations/models are offered.
-    await pickOption(this.page, job.type === "video" ? /Vid[eé]o/i : /Image/i);
+    // Anchored on purpose: the project sidebar's "Images"/"Videos" filters come first in the DOM and
+    // an unanchored /Image/ or /(Frames|Images)$/ clicked those instead of the mode radios.
+    await pickOption(this.page, job.type === "video" ? MODE_LABEL.video : MODE_LABEL.image);
     await this.page.waitForTimeout(400);
 
     // Video input mode: Frames (first/last frame images) vs Ingredients (text-to-video).
     if (job.type === "video") {
       const wantsFrames = Boolean(job.startFrame || job.endFrame);
-      await pickOption(this.page, wantsFrames ? /(Frames|Images)$/i : /Ingr[eé]dients$/i);
+      await pickOption(this.page, wantsFrames ? MODE_LABEL.frames : MODE_LABEL.ingredients);
       await this.page.waitForTimeout(300);
     }
 
@@ -312,13 +344,62 @@ export class FlowPage implements FlowAutomation {
       throw new UiContractError(`clicking the ${slot} frame slot did not open the frame picker`);
     });
 
+    await this.uploadIntoPicker(picker, filePath, `${slot} frame`);
+
+    await confirmPicker(this.page, picker);
+    if ((await slotLabel().count()) > 0) {
+      throw new UiContractError(`the ${slot} frame slot is still empty after adding the uploaded image`);
+    }
+  }
+
+  // Ingredients mode: put reference images and saved characters in the prompt's ingredient bar.
+  // Live-verified (Oct 2026): "Add ingredients to the prompt box" opens <flow-add-menu-popover-content>;
+  // its "Upload media" button uploads an image (which then shows as a selected [role=option] named
+  // after the file) and its "Characters" tab lists the project's characters as [role=option];
+  // each added item becomes a <flow-ingredient-chip>.
+  //
+  // Like uploadFrame, every failure throws BEFORE submit: a scene rendered without its character
+  // or reference still costs credits.
+  private async addIngredients(images: string[], characters: string[]): Promise<void> {
+    // Chips left by an earlier (failed) job would be sent along with this prompt.
+    if ((await this.page.locator(CHIP_SELECTOR).count()) > 0) {
+      await this.page.getByRole("button", { name: "Clear prompt" }).first().click().catch(() => undefined);
+      await this.page.waitForTimeout(500);
+    }
+    for (const image of images) {
+      const before = await this.page.locator(CHIP_SELECTOR).count();
+      const picker = await this.openIngredientPicker();
+      await this.uploadIntoPicker(picker, image, "ingredient image");
+      await confirmPicker(this.page, picker);
+      if (!(await this.chipAdded(before)) && !(await this.chipAdded(before))) {
+        throw new UiContractError(`the ingredient image ${basename(image)} did not appear in the prompt`);
+      }
+    }
+    for (const name of characters) await this.referenceCharacter(name);
+  }
+
+  private async openIngredientPicker(): Promise<Locator> {
+    const addButton = this.page.getByRole("button", { name: /add ingredients/i }).first();
+    if ((await addButton.count()) === 0) {
+      throw new UiContractError("the Add ingredients button is not on the page (Ingredients mode not selected?)");
+    }
+    await addButton.click();
+    const picker = this.page.locator("flow-add-menu-popover-content, [role=dialog]").filter({ visible: true }).first();
+    await picker.waitFor({ state: "visible", timeout: 10000 }).catch(() => {
+      throw new UiContractError("clicking Add ingredients did not open the ingredient picker");
+    });
+    return picker;
+  }
+
+  // Upload a local image through the picker's "Upload media" button and leave it selected.
+  private async uploadIntoPicker(picker: Locator, filePath: string, what: string): Promise<void> {
     const uploadButton = picker.locator("button").filter({ hasText: /upload media/i }).first();
     const [chooser] = await Promise.all([
       this.page.waitForEvent("filechooser", { timeout: 15000 }),
       uploadButton.click()
     ]);
     await chooser.setFiles(filePath);
-    await this.waitForUploadConsent();
+    await waitForUploadConsent(this.page);
 
     // The new upload shows up selected; prefer the option carrying this file's name.
     const uploaded = picker
@@ -327,55 +408,38 @@ export class FlowPage implements FlowAutomation {
       .or(picker.locator('[role=option][aria-selected="true"]'))
       .first();
     await uploaded.waitFor({ state: "visible", timeout: 60000 }).catch(() => {
-      throw new UiContractError(`the uploaded ${slot} frame never appeared in the frame picker`);
+      throw new UiContractError(`the uploaded ${what} never appeared in the media picker`);
     });
     if ((await uploaded.getAttribute("aria-selected")) !== "true") await uploaded.click();
-
-    await confirmPicker(this.page, picker);
-    if ((await slotLabel().count()) > 0) {
-      throw new UiContractError(`the ${slot} frame slot is still empty after adding the uploaded image`);
-    }
   }
 
-  // Flow asks "Rights to use this image" before accepting an upload (at least the first time).
-  // That is the account owner's attestation to make, so we never click it: we wait for the user
-  // to answer it in the Chrome window, and stop if they don't.
-  private async waitForUploadConsent(): Promise<void> {
-    const consent = this.page.getByText(/rights to use this image/i).first();
-    const appeared = await consent.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false);
-    if (!appeared) return;
-    console.log('[gflow] Flow asks you to confirm "Rights to use this image" — answer it in the Chrome window to continue (waiting up to 5 minutes).');
-    await consent.waitFor({ state: "hidden", timeout: 5 * 60_000 }).catch(() => {
-      throw new ManualActionRequiredError('Flow is waiting for you to confirm "Rights to use this image" for the uploaded frame.');
-    });
+  private chipAdded(before: number): Promise<boolean> {
+    return this.page
+      .waitForFunction(([selector, count]) => document.querySelectorAll(selector).length > count, [CHIP_SELECTOR, before] as const, { timeout: 2000 })
+      .then(() => true, () => false);
   }
 
-  // Reference a saved character in the current generation.
-  // Live-verified: the "add_2 Create" button opens a media-picker dialog with a
-  // "Characters" tab; we click the tab, pick the named tile, then confirm.
   private async referenceCharacter(name: string): Promise<void> {
-    // Open the ingredient picker (aria-haspopup="dialog", text "add_2Create")
-    const addBtn = this.page.locator('button[aria-haspopup="dialog"]').filter({ hasText: /add_2/i }).first();
-    if ((await addBtn.count()) === 0) return;
-    await addBtn.click().catch(() => undefined);
+    const before = await this.page.locator(CHIP_SELECTOR).count();
+    const picker = await this.openIngredientPicker();
+    await picker.getByRole("tab").filter({ hasText: /characters/i }).first().click();
 
-    const dialog = this.page.locator("[role=dialog],[aria-modal=true]").first();
-    await dialog.waitFor({ state: "visible", timeout: 10000 }).catch(() => undefined);
+    const option = picker.getByRole("option").filter({ hasText: characterLabel(name) }).first();
+    await option.waitFor({ state: "visible", timeout: 10000 }).catch(async () => {
+      await this.page.keyboard.press("Escape").catch(() => undefined);
+      throw new UiContractError(`character "${name}" is not in this Flow project's characters (create it with gflow character create)`);
+    });
+    if ((await option.getAttribute("aria-selected")) !== "true") await option.click();
 
-    // Switch to the Characters tab
-    const charsTab = dialog.locator("button,[role=tab]").filter({ hasText: /Characters/i }).first();
-    await charsTab.click().catch(() => undefined);
-    await this.page.waitForTimeout(400);
-
-    // Pick the tile by name
-    const tile = dialog.getByText(name, { exact: true }).first();
-    await tile.waitFor({ state: "visible", timeout: 10000 }).catch(() => undefined);
-    await tile.click().catch(() => undefined);
-
-    // Confirm
-    const confirm = dialog.locator("button").filter({ hasText: /add to prompt/i }).first();
-    await confirm.click().catch(() => undefined);
-    await dialog.waitFor({ state: "hidden", timeout: 10000 }).catch(() => undefined);
+    // Clicking a character tile sometimes adds it straight away (the picker closes); otherwise
+    // the tile is only selected and "Add to prompt" adds it.
+    if (!(await this.chipAdded(before))) {
+      if (await picker.isVisible()) await confirmPicker(this.page, picker);
+      if (!(await this.chipAdded(before)) && !(await this.chipAdded(before))) {
+        throw new UiContractError(`character "${name}" did not appear in the prompt after Add to prompt`);
+      }
+    }
+    if (await picker.isVisible()) await this.page.keyboard.press("Escape").catch(() => undefined);
   }
 
   private async fillPrompt(prompt: string): Promise<void> {

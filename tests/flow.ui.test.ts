@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { englishUrl, isFlowProjectId, projectIdFromUrl, projectSubUrl } from "../src/flow/ui.js";
-import { isProjectGridUrl, mediaKey, newResults } from "../src/flow/page.js";
+import { MODE_LABEL, characterLabel, isProjectGridUrl, mediaKey, newResults } from "../src/flow/page.js";
 
 describe("project url helpers", () => {
   it("extracts the project id from a flow url", () => {
@@ -11,7 +11,7 @@ describe("project url helpers", () => {
     expect(projectIdFromUrl("https://labs.google/fx/tools/flow")).toBeUndefined();
   });
   it("builds a project sub-url", () => {
-    expect(projectSubUrl("abc", "characters")).toBe("https://labs.google/fx/tools/flow/project/abc/characters?hl=en");
+    expect(projectSubUrl("abc", "character")).toBe("https://labs.google/fx/tools/flow/project/abc/character?hl=en");
     expect(projectSubUrl("abc", "")).toBe("https://labs.google/fx/tools/flow/project/abc?hl=en");
   });
 
@@ -39,5 +39,22 @@ describe("project url helpers", () => {
   it("forces the English UI on any Flow URL", () => {
     expect(englishUrl("https://flow.google.com/?pli=1")).toBe("https://flow.google.com/?pli=1&hl=en");
     expect(englishUrl("https://flow.google.com/?hl=es")).toBe("https://flow.google.com/?hl=en");
+  });
+
+  it("matches a character tile by whole name", () => {
+    expect(characterLabel("Minwoo").test("Minwoo Character")).toBe(true);
+    expect(characterLabel("minwoo").test("Minwoo")).toBe(true);
+    expect(characterLabel("Min").test("Minwoo Character")).toBe(false);
+    expect(characterLabel("Seo-yeon (2)").test("Seo-yeon (2) Character")).toBe(true);
+  });
+
+  it("matches the mode radios but not the sidebar filters", () => {
+    expect(MODE_LABEL.frames.test("crop_freeFrames")).toBe(true);
+    expect(MODE_LABEL.ingredients.test("chrome_extensionIngredients")).toBe(true);
+    expect(MODE_LABEL.video.test("videocamVideo")).toBe(true);
+    expect(MODE_LABEL.image.test("imageImage")).toBe(true);
+    for (const sidebar of ["imageImages", "videocamVideos", "dashboardAll media"]) {
+      expect(Object.values(MODE_LABEL).some((label) => label.test(sidebar))).toBe(false);
+    }
   });
 });

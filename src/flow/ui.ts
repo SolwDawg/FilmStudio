@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright";
-import { UiContractError } from "../errors.js";
+import { ManualActionRequiredError, UiContractError } from "../errors.js";
 
 // Click the element marked with data-gflow-pick. The marking evaluate already proved the
 // element is attached, visible and sized, so when the normal click cannot pass Playwright's
@@ -120,8 +120,13 @@ export async function dismissOpenLayers(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     // :visible matters: Radix leaves stale hidden wrappers in the DOM, and .first() locking
     // onto one of those would report "nothing open" while a later visible layer still blocks.
+    // Flow moved its popovers (settings, add menu) to Angular CDK overlays in 2026; keep the
+    // Radix selectors for the menus that still use it.
     const open = await page
-      .locator("[data-radix-popper-content-wrapper]:visible, [data-radix-menu-content][data-state=open]:visible")
+      .locator(
+        "[data-radix-popper-content-wrapper]:visible, [data-radix-menu-content][data-state=open]:visible, " +
+          ".cdk-overlay-pane:has(flow-prompt-box-settings, flow-add-menu-popover-content, [role=menu], [role=listbox]):visible"
+      )
       .first()
       .isVisible()
       .catch(() => false);
@@ -132,7 +137,7 @@ export async function dismissOpenLayers(page: Page): Promise<void> {
 }
 
 export const FLOW_BASE = "https://labs.google/fx/tools/flow";
-export type ProjectSub = "" | "characters" | "tools" | "create-tool";
+export type ProjectSub = "" | "character" | "tools" | "create-tool";
 
 // Flow renders in the Google account's language (Spanish, French, ...), but the selectors in
 // this engine match the English UI text ("New project", "Frames", "Add to Prompt", ...).
@@ -306,7 +311,20 @@ export async function addFromProject(page: Page, triggerText: RegExp, name: stri
 }
 
 export async function confirmPicker(page: Page, dialog: Locator): Promise<void> {
-  const confirm = dialog.locator("button").filter({ hasText: /add to (prompt|scene|character)/i }).first();
+  const confirm = dialog.locator("button").filter({ hasText: /add (to (prompt|scene|character)|media)/i }).first();
   await confirm.click();
   await dialog.waitFor({ state: "hidden", timeout: 10000 });
+}
+
+// Flow asks "Rights to use this image" before accepting an upload (at least the first time).
+// That is the account owner's attestation to make, so we never click it: we wait for the user
+// to answer it in the Chrome window, and stop if they don't.
+export async function waitForUploadConsent(page: Page): Promise<void> {
+  const consent = page.getByText(/rights to use this image/i).first();
+  const appeared = await consent.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false);
+  if (!appeared) return;
+  console.log('[gflow] Flow asks you to confirm "Rights to use this image" — answer it in the Chrome window to continue (waiting up to 5 minutes).');
+  await consent.waitFor({ state: "hidden", timeout: 5 * 60_000 }).catch(() => {
+    throw new ManualActionRequiredError('Flow is waiting for you to confirm "Rights to use this image" for the uploaded image.');
+  });
 }
