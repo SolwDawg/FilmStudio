@@ -86,11 +86,12 @@ export class CharacterPage implements CharacterAutomation {
     const filter = this.page.locator("button").filter({ hasText: /^\s*(accessibility_new\s*)?Characters\s*$/ }).first();
     await filter.waitFor({ state: "visible", timeout: 20000 });
     await filter.click();
-    await this.page
-      .locator("flow-character-tile, [role=textbox]")
-      .first()
-      .waitFor({ state: "visible", timeout: 10000 })
-      .catch(() => undefined);
+    // Either the tiles load, or (no characters yet) Flow opens the New character page. Waiting
+    // for "any textbox" instead returned at once: the project page's prompt box is always there.
+    await Promise.race([
+      this.page.locator("flow-character-tile").first().waitFor({ state: "visible", timeout: 15000 }),
+      this.page.waitForURL(/\/character(?:[?#]|$)/, { timeout: 15000 })
+    ]).catch(() => undefined);
     return this.page.evaluate(() => {
       const results: Array<{ name: string; thumbnailUrl?: string }> = [];
       for (const tile of [...document.querySelectorAll("flow-character-tile")]) {
