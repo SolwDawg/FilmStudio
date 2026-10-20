@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import type { BrowserContext, Download, Locator, Page } from "playwright";
-import { DownloadError, GenerationFailedError, ManualActionRequiredError } from "../errors.js";
+import { DownloadError, GenerationFailedError, ManualActionRequiredError } from "../core/errors.js";
 
 export type DownloadQuality = "original" | "2k" | "4k";
 

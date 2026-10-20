@@ -1,5 +1,5 @@
 // ============================================================
-// Cinematic Prompts, Production Directives & Safety Keywords
+// Cinematic Prompts & Production Directives
 // ============================================================
 //
 // Two audiences, kept apart on purpose:
@@ -85,17 +85,3 @@ export const DEFAULT_STORYBOARD_PROMPT = `Cinematic storyboard drawn as a grid o
 export const DEFAULT_LOOP_REWRITE_PROMPT = `Viết lại cảnh này thành một take khác: đổi cách diễn, góc máy hoặc nhịp độ để kịch tính hơn, nhưng giữ nguyên nhân vật, bối cảnh và thoại chính. Giữ nguyên trạng thái mở đầu và kết thúc của cảnh (vị trí, tư thế, ánh sáng) để vẫn nối liền với cảnh trước và cảnh sau. Giữ đúng định dạng SCENE gốc, chỉ xuất scene.`;
 
 export const DEFAULT_IMAGE_PRODUCTION_RULE = `Photorealistic live-action film still. Natural motivated lighting, realistic lens perspective and depth of field, true-to-life skin, hair and fabric texture. Faces, outfits and environment match the reference images exactly. No text or watermarks.`;
-
-export const ADVERSARIAL_MUTATION_PROMPT = `Professional cinematic portrait. Redesign facial features to be 100% unique and strictly non-celebrity. MUST RETAIN identical hair style, eye color, skin texture, clothing, and background from reference. Highest fidelity.`;
-
-// The 23 safety keywords monitored by the auto-healing loop
-export const SAFETY_KEYWORDS = [
-  "safety", "policy", "content", "filter", "violation", "flagged", "blocked",
-  "unsafe", "harmful", "sensitive", "prohibited", "an toàn", "chính sách",
-  "vi phạm", "từ chối", "bộ lọc", "nhạy cảm", "giới hạn", "ngôn ngữ",
-  "hình ảnh", "celebrity", "famous person", "safety celebrity"
-] as const;
-
-export const CELEBRITY_KEYWORDS = [
-  "celebrity", "famous person", "safety celebrity", "người nổi tiếng", "khuôn mặt nhận dạng"
-] as const;

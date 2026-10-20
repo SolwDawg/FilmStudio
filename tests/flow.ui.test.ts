@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { englishUrl, isFlowProjectId, projectIdFromUrl, projectSubUrl } from "../src/flow/ui.js";
+
 import { MODE_LABEL, characterLabel, isProjectGridUrl, mediaKey, newResults } from "../src/flow/page.js";
+import { englishUrl, isFlowProjectId, projectIdFromUrl, projectSubUrl } from "../src/core/flow-urls.js";
 
 describe("project url helpers", () => {
   it("extracts the project id from a flow url", () => {

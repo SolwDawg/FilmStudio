@@ -8,22 +8,14 @@ import {
   ManualActionRequiredError,
   RateLimitedError,
   UiContractError
-} from "../errors.js";
-import { artifactBasename, writeArtifactMetadata } from "../output/artifacts.js";
+} from "../core/errors.js";
+import { artifactBasename, writeArtifactMetadata } from "../core/artifacts.js";
 import { downloadResult, type DownloadQuality } from "./download.js";
-import type { GFlowJob } from "../jobs/schema.js";
-import type { FlowAutomation, FlowAutomationRunInput, FlowJobResult } from "./types.js";
+import type { GFlowJob } from "../core/jobs.js";
+import type { FlowAutomation, FlowAutomationRunInput, FlowJobResult } from "../core/automation.js";
 import { flowLocators } from "./locators.js";
-import {
-  confirmPicker,
-  dismissOpenLayers,
-  navigateToProject,
-  pickModel,
-  pickOption,
-  projectIdFromUrl,
-  projectSubUrl,
-  waitForUploadConsent
-} from "./ui.js";
+import { confirmPicker, dismissOpenLayers, navigateToProject, pickModel, pickOption, waitForUploadConsent } from "./ui.js";
+import { FLOW_URL, projectIdFromUrl, projectSubUrl } from "../core/flow-urls.js";
 
 // The project's own page (/project/<id>), as opposed to a clip viewer (/edit/<tile>) or a scene.
 export function isProjectGridUrl(url: string): boolean {
@@ -65,9 +57,6 @@ export function newResults(current: string[], beforeKeys: Set<string>): string[]
   });
 }
 
-// hl=en: the engine matches English UI text; see englishUrl() in ui.ts.
-export const FLOW_URL = "https://flow.google.com/?pli=1&hl=en";
-
 // Flow's aspect-ratio buttons render a Material icon ligature prefix; this maps the visible
 // ratio label to that ligature so we can target the right popover button.
 const RATIO_ICON: Record<string, string> = {
@@ -77,7 +66,6 @@ const RATIO_ICON: Record<string, string> = {
   "1:1": "crop_square",
   "3:4": "crop_portrait"
 };
-
 
 export class FlowPage implements FlowAutomation {
   constructor(private readonly page: Page, private readonly flowUrl = FLOW_URL) {}

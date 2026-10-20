@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseBatchYaml, parseImageJob, parseVideoJob, parseCharacter, parseTool } from "../src/jobs/schema.js";
-import { parseAgentSettings, parseAgentInstruction, parseAgentRun } from "../src/jobs/schema.js";
-import { parseExtendScene } from "../src/jobs/schema.js";
+import { parseBatchYaml, parseImageJob, parseVideoJob, parseCharacter, parseTool } from "../src/core/jobs.js";
+import { parseAgentSettings, parseAgentInstruction, parseAgentRun } from "../src/core/jobs.js";
+import { parseExtendScene } from "../src/core/jobs.js";
 
 describe("job schemas", () => {
   it("parses an image job with defaults", () => {

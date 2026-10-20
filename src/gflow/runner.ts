@@ -8,9 +8,9 @@ import {
   RateLimitedError,
   UiContractError,
   messageForError
-} from "../errors.js";
-import type { FlowAutomation, FlowJobResult } from "../flow/types.js";
-import type { GFlowJob } from "./schema.js";
+} from "../core/errors.js";
+import type { FlowAutomation, FlowJobResult } from "../core/automation.js";
+import type { GFlowJob } from "../core/jobs.js";
 
 type JobStatus = "pending" | "running" | "completed" | "failed";
 type RunStatus = "completed" | "failed";

@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { AgentAutomation, CharacterAutomation, FlowAutomation, SceneAutomation, ToolAutomation } from "../src/flow/types.js";
-import { createProgram, runCli } from "../src/cli.js";
+import type { AgentAutomation, CharacterAutomation, FlowAutomation, SceneAutomation, ToolAutomation } from "../src/core/automation.js";
+import { createProgram, runCli } from "../src/gflow/cli.js";
 
 describe("CLI", () => {
   it("runs an image command through automation", async () => {

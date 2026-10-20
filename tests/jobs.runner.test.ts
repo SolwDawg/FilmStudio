@@ -2,10 +2,10 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RateLimitedError } from "../src/errors.js";
-import type { FlowAutomation } from "../src/flow/types.js";
-import { runJobs } from "../src/jobs/runner.js";
-import type { GFlowJob } from "../src/jobs/schema.js";
+import { RateLimitedError } from "../src/core/errors.js";
+import type { FlowAutomation } from "../src/core/automation.js";
+import { runJobs } from "../src/gflow/runner.js";
+import type { GFlowJob } from "../src/core/jobs.js";
 
 function job(id: string): GFlowJob {
   return {

@@ -1,10 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserContext, Page } from "playwright";
-import { GenerationBlockedError, GenerationFailedError, UiContractError } from "../errors.js";
-import type { CharacterAutomation, CharacterResult, CharacterSummary, CreateCharacterInput } from "./types.js";
-import { confirmPicker, navigateToProject, pickModel, projectSubUrl, waitForUploadConsent } from "./ui.js";
+import { GenerationBlockedError, GenerationFailedError, UiContractError } from "../core/errors.js";
+import type { CharacterAutomation, CharacterResult, CharacterSummary, CreateCharacterInput } from "../core/automation.js";
+import { confirmPicker, navigateToProject, pickModel, waitForUploadConsent } from "./ui.js";
 import { flowLocators } from "./locators.js";
+import { projectSubUrl } from "../core/flow-urls.js";
 
 const PRESET_LABEL: Record<NonNullable<CreateCharacterInput["preset"]>, RegExp> = {
   familiar: /The Familiar/i,

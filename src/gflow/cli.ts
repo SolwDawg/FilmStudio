@@ -1,20 +1,20 @@
 import { readFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { Command, CommanderError, InvalidArgumentError } from "commander";
-import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, launchLoginChrome, openBrowserSession, type BrowserChannel } from "./browser/session.js";
-import { exitCodeForError, messageForError } from "./errors.js";
-import { FlowPage, FLOW_URL } from "./flow/page.js";
-import type { AgentAutomation, CharacterAutomation, EditAutomation, FlowAutomation, SceneAutomation, ToolAutomation } from "./flow/types.js";
-import { AgentPage } from "./flow/agent.js";
-import { CharacterPage } from "./flow/characters.js";
-import { EditPage } from "./flow/edit.js";
-import { ScenePage } from "./flow/scene.js";
-import { ToolPage } from "./flow/tools.js";
-import { parseAgentInstruction, parseAgentRun, parseAgentSettings, parseBatchYaml, parseCharacter, parseEditMedia, parseExtendScene, parseImageJob, parseTool, parseVideoJob } from "./jobs/schema.js";
-import { runJobs } from "./jobs/runner.js";
-import { resolveOutputDir } from "./config/paths.js";
+import { BROWSER_CHANNELS, DEFAULT_BROWSER_CHANNEL, launchLoginChrome, openBrowserSession, type BrowserChannel } from "../browser/session.js";
+import { exitCodeForError, messageForError } from "../core/errors.js";
+import { FlowPage } from "../flow/page.js";
+import type { AgentAutomation, CharacterAutomation, EditAutomation, FlowAutomation, SceneAutomation, ToolAutomation } from "../core/automation.js";
+import { AgentPage } from "../flow/agent.js";
+import { CharacterPage } from "../flow/characters.js";
+import { EditPage } from "../flow/edit.js";
+import { ScenePage } from "../flow/scene.js";
+import { ToolPage } from "../flow/tools.js";
+import { parseAgentInstruction, parseAgentRun, parseAgentSettings, parseBatchYaml, parseCharacter, parseEditMedia, parseExtendScene, parseImageJob, parseTool, parseVideoJob } from "../core/jobs.js";
+import { runJobs } from "./runner.js";
+import { resolveOutputDir } from "../core/paths.js";
+import { resolveVersion } from "../core/version.js";
+import { FLOW_URL } from "../core/flow-urls.js";
 
 export interface CreateProgramOptions {
   automation?: FlowAutomation;
@@ -58,21 +58,6 @@ function commandOption<T>(command: unknown, key: string): T | undefined {
     if (value !== undefined) return value as T;
   }
   return undefined;
-}
-
-// Read the CLI version from package.json so `--version` never drifts from the package.
-// Dev runs this file from src/ (package.json one level up); the build runs it from
-// dist/src/ (two levels up), so try both anchors relative to this module.
-export function resolveVersion(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const rel of ["../package.json", "../../package.json"]) {
-    try {
-      return (JSON.parse(readFileSync(join(here, rel), "utf8")) as { version: string }).version;
-    } catch {
-      // try the next candidate
-    }
-  }
-  return "0.0.0";
 }
 
 async function realAutomation(profile: string, headed: boolean, browser: BrowserChannel): Promise<{ automation: FlowAutomation; close(): Promise<void> }> {

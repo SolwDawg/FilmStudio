@@ -4,7 +4,7 @@ import { writeFile, mkdir, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, join, resolve, sep } from "node:path";
-import { stitchFilm } from "./pipeline.js";
+import { stitchFilm } from "../render/pipeline.js";
 import {
   assertSlug,
   createProject,
@@ -17,19 +17,19 @@ import {
   type FilmCharacter,
   type FilmLocation,
   type FilmScene
-} from "./project.js";
-import { DASHBOARD_HTML } from "./dashboard.js";
-import { chunkStory, parseStructuredScript } from "./breakdown.js";
+} from "../domain/project.js";
+import { DASHBOARD_HTML } from "./html.js";
+import { chunkStory, parseStructuredScript } from "../domain/breakdown.js";
 import {
   buildActorDnaImagePrompt,
   buildLocationDnaImagePrompt,
   createSlidingSceneWindows,
   mergeDiscoveredActors
-} from "./dna.js";
-import { cropStoryboardGrid } from "./storyboard.js";
-import { buildSelfHealingPrompt } from "./healing.js";
-import { DEFAULT_HEAL_INSTRUCTION, DEFAULT_STORYBOARD_PROMPT } from "./prompts.js";
-import { DEFAULT_GENRE, GENRES, genrePreset, isGenreId } from "./genres.js";
+} from "../domain/dna.js";
+import { cropStoryboardGrid } from "../media/storyboard.js";
+import { buildSelfHealingPrompt } from "../domain/healing.js";
+import { DEFAULT_HEAL_INSTRUCTION, DEFAULT_STORYBOARD_PROMPT } from "../domain/prompts.js";
+import { DEFAULT_GENRE, GENRES, genrePreset, isGenreId } from "../domain/genres.js";
 
 const MIME: Record<string, string> = {
   ".mp4": "video/mp4",

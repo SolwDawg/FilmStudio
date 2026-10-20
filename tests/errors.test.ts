@@ -10,7 +10,7 @@ import {
   UiContractError,
   exitCodeForError,
   messageForError
-} from "../src/errors.js";
+} from "../src/core/errors.js";
 
 describe("exitCodeForError", () => {
   it("maps local and UI errors to stable exit codes", () => {

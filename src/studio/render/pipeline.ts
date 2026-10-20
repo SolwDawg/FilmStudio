@@ -13,11 +13,11 @@ import {
   RateLimitedError,
   UiContractError,
   messageForError
-} from "../errors.js";
-import type { FlowAutomation } from "../flow/types.js";
-import { parseVideoJob, type VideoJob } from "../jobs/schema.js";
-import { concatVideos, extractLastFrame, normalizeVideo } from "./ffmpeg.js";
-import { projectIdFromUrl } from "../flow/ui.js";
+} from "../../core/errors.js";
+import type { FlowAutomation } from "../../core/automation.js";
+import { parseVideoJob, type VideoJob } from "../../core/jobs.js";
+import { concatVideos, extractLastFrame, normalizeVideo } from "../media/ffmpeg.js";
+
 import {
   loadFilm,
   loadState,
@@ -29,8 +29,9 @@ import {
   type FilmState,
   type ProjectPaths,
   type SceneState
-} from "./project.js";
-import { buildScenePrompt } from "./script.js";
+} from "../domain/project.js";
+import { buildScenePrompt } from "../domain/script.js";
+import { projectIdFromUrl } from "../../core/flow-urls.js";
 
 const VIDEO_EXTENSIONS = [".mp4", ".webm", ".mov"];
 

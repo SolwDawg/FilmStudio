@@ -3,16 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Script } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CreditLimitError, GenerationBlockedError, GenerationFailedError } from "../src/errors.js";
-import type { FlowAutomation, FlowAutomationRunInput } from "../src/flow/types.js";
-import { planBatch, renderFilm } from "../src/studio/pipeline.js";
-import { createProject, loadFilm, loadState, saveFilm, slugify } from "../src/studio/project.js";
-import { buildScenePrompt, parseScript, scenesFromScript, videoShotText } from "../src/studio/script.js";
-import { startDashboard } from "../src/studio/server.js";
-import { DASHBOARD_HTML } from "../src/studio/dashboard.js";
-import { GENRES } from "../src/studio/genres.js";
-import { buildStoryChunkPrompt } from "../src/studio/breakdown.js";
-import { DURATION_PLACEHOLDER } from "../src/studio/prompts.js";
+import { CreditLimitError, GenerationBlockedError, GenerationFailedError } from "../src/core/errors.js";
+import type { FlowAutomation, FlowAutomationRunInput } from "../src/core/automation.js";
+import { planBatch, renderFilm } from "../src/studio/render/pipeline.js";
+import { createProject, loadFilm, loadState, saveFilm, slugify } from "../src/studio/domain/project.js";
+import { buildScenePrompt, parseScript, scenesFromScript, videoShotText } from "../src/studio/domain/script.js";
+import { startDashboard } from "../src/studio/dashboard/server.js";
+import { DASHBOARD_HTML } from "../src/studio/dashboard/html.js";
+import { GENRES } from "../src/studio/domain/genres.js";
+import { buildStoryChunkPrompt } from "../src/studio/domain/breakdown.js";
+import { DURATION_PLACEHOLDER } from "../src/studio/domain/prompts.js";
 
 const SCRIPT = `SCENE 1:
 Min-woo steps out of a car in the rain.

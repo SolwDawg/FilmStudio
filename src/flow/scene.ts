@@ -5,11 +5,12 @@ import {
   GenerationBlockedError,
   GenerationFailedError,
   RateLimitedError
-} from "../errors.js";
-import { artifactBasename, writeArtifactMetadata } from "../output/artifacts.js";
+} from "../core/errors.js";
+import { artifactBasename, writeArtifactMetadata } from "../core/artifacts.js";
 import { flowLocators } from "./locators.js";
-import type { ExtendSceneInput, ExtendSceneResult, SceneAutomation, SceneSummary } from "./types.js";
-import { FLOW_BASE, dismissOpenLayers, englishUrl, resolveExistingProject } from "./ui.js";
+import type { ExtendSceneInput, ExtendSceneResult, SceneAutomation, SceneSummary } from "../core/automation.js";
+import { dismissOpenLayers, resolveExistingProject } from "./ui.js";
+import { FLOW_BASE, englishUrl } from "../core/flow-urls.js";
 
 // All selectors below were verified against the live scenebuilder UI:
 // - A video card on the project page links to /project/<id>/edit/<tileId>; opening it

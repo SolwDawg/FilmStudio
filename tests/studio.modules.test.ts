@@ -1,20 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { chunkStory, buildStoryChunkPrompt, parseStructuredScript } from "../src/studio/breakdown.js";
+import { chunkStory, buildStoryChunkPrompt, parseStructuredScript } from "../src/studio/domain/breakdown.js";
 import {
   createSlidingSceneWindows,
   buildActorDnaImagePrompt,
   buildLocationDnaImagePrompt,
   mergeDiscoveredActors
-} from "../src/studio/dna.js";
-import { isSafetyViolation, isCelebrityViolation, buildAdversarialMutationPrompt } from "../src/studio/adversarial.js";
+} from "../src/studio/domain/dna.js";
 import {
   calculateExponentialBackoff,
   buildSelfHealingPrompt,
   cleanHealedResponse
-} from "../src/studio/healing.js";
-import { calculateGridSlices } from "../src/studio/storyboard.js";
-import { encoderArgs } from "../src/studio/ffmpeg.js";
-import { scenesFromScript } from "../src/studio/script.js";
+} from "../src/studio/domain/healing.js";
+import { calculateGridSlices } from "../src/studio/media/storyboard.js";
+import { encoderArgs } from "../src/studio/media/ffmpeg.js";
+import { scenesFromScript } from "../src/studio/domain/script.js";
 import {
   DEFAULT_DIRECTIONAL_PROMPT,
   DEFAULT_LOCATION_DIRECTIONAL_PROMPT,
@@ -22,7 +21,7 @@ import {
   DEFAULT_STORY_PROMPT,
   DEFAULT_VIDEO_STYLE,
   DURATION_PLACEHOLDER
-} from "../src/studio/prompts.js";
+} from "../src/studio/domain/prompts.js";
 
 describe("ffmpeg encoder arguments", () => {
   it("uses each encoder's own quality options", () => {
@@ -168,26 +167,6 @@ describe("Visual DNA & Identity Engine", () => {
     const minh = merged.find((m) => m.name === "Minh");
     expect(minh?.aliases).toContain("Anh Minh");
     expect(minh?.aliases).toContain("Minh Lee");
-  });
-});
-
-describe("Adversarial Celebrity Bypass", () => {
-  it("detects safety violation keywords", () => {
-    expect(isSafetyViolation("Request blocked due to safety policy")).toBe(true);
-    expect(isSafetyViolation("Nội dung vi phạm chính sách bộ lọc")).toBe(true);
-    expect(isSafetyViolation("Render completed successfully")).toBe(false);
-  });
-
-  it("detects celebrity violation keywords", () => {
-    expect(isCelebrityViolation("Safety celebrity filter detected")).toBe(true);
-    expect(isCelebrityViolation("Phát hiện người nổi tiếng trong khung hình")).toBe(true);
-    expect(isCelebrityViolation("Generic error 500")).toBe(false);
-  });
-
-  it("generates adversarial mutation prompt", () => {
-    const prompt = buildAdversarialMutationPrompt("Tom", "Dark hair, blue suit");
-    expect(prompt).toContain("Redesign facial features to be 100% unique");
-    expect(prompt).toContain("MUST RETAIN identical hair style");
   });
 });
 

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Command } from "commander";
-import { createProgram, resolveVersion } from "../src/cli.js";
+import { createProgram } from "../src/gflow/cli.js";
+import { resolveVersion } from "../src/core/version.js";
 
 function sub(program: Command, name: string): Command {
   const found = program.commands.find((c) => c.name() === name);

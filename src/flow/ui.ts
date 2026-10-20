@@ -1,5 +1,6 @@
 import type { Locator, Page } from "playwright";
-import { ManualActionRequiredError, UiContractError } from "../errors.js";
+import { ManualActionRequiredError, UiContractError } from "../core/errors.js";
+import { FLOW_BASE, englishUrl, isFlowProjectId, projectIdFromUrl, projectSubUrl } from "../core/flow-urls.js";
 
 // Click the element marked with data-gflow-pick. The marking evaluate already proved the
 // element is attached, visible and sized, so when the normal click cannot pass Playwright's
@@ -134,32 +135,6 @@ export async function dismissOpenLayers(page: Page): Promise<void> {
     await page.keyboard.press("Escape").catch(() => undefined);
     await page.waitForTimeout(250);
   }
-}
-
-export const FLOW_BASE = "https://labs.google/fx/tools/flow";
-export type ProjectSub = "" | "character" | "tools" | "create-tool";
-
-// Flow renders in the Google account's language (Spanish, French, ...), but the selectors in
-// this engine match the English UI text ("New project", "Frames", "Add to Prompt", ...).
-// `hl=en` forces English for that page load only — it does not persist — so every URL the
-// engine navigates to goes through here.
-export function englishUrl(url: string): string {
-  const parsed = new URL(url);
-  parsed.searchParams.set("hl", "en");
-  return parsed.toString();
-}
-
-export function isFlowProjectId(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-}
-
-export function projectIdFromUrl(url: string): string | undefined {
-  const m = url.match(/\/project\/([0-9a-f-]+)/i);
-  return m ? m[1] : undefined;
-}
-
-export function projectSubUrl(projectId: string, sub: ProjectSub): string {
-  return englishUrl(`${FLOW_BASE}/project/${projectId}${sub ? `/${sub}` : ""}`);
 }
 
 // Ensure the page is inside a project and return its id. When `projectName` is given,

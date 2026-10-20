@@ -1,4 +1,4 @@
-import type { GFlowJob } from "../jobs/schema.js";
+import type { GFlowJob } from "./jobs.js";
 
 export interface FlowArtifact {
   path: string;

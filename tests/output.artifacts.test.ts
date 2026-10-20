@@ -2,7 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { artifactBasename, createArtifactPlan, writeArtifactMetadata } from "../src/output/artifacts.js";
+import { artifactBasename, createArtifactPlan, writeArtifactMetadata } from "../src/core/artifacts.js";
 
 describe("artifact output", () => {
   it("creates deterministic asset and metadata paths", () => {
